@@ -20,8 +20,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-API = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={}"
+# 동행복권 공식 API. 해외 IP에서 연결이 차단되는 경우가 있어 대체 경로를 함께 둔다.
+SOURCES = [
+    "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={}",
+    "https://dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={}",
+]
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+TIMEOUT = 8       # 차단 시 빠르게 실패해야 전체가 멎지 않는다
+RETRIES = 2
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "docs" / "data"
@@ -37,14 +43,24 @@ class NotYetDrawn(Exception):
     """해당 회차가 아직 추첨되지 않음."""
 
 
-def fetch_draw(no: int, retries: int = 4) -> dict:
+def fetch_draw(no: int, retries: int = RETRIES) -> dict:
     """단일 회차를 조회한다. 미추첨 회차는 NotYetDrawn 을 던진다."""
     last_err: Exception | None = None
     for attempt in range(retries):
+        for url in SOURCES:
+            try:
+                req = urllib.request.Request(url.format(no), headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                break
+            except NotYetDrawn:
+                raise
+            except Exception as err:  # 다음 소스로 넘어간다
+                last_err = err
+                payload = None
         try:
-            req = urllib.request.Request(API.format(no), headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
+            if payload is None:
+                raise last_err or RuntimeError("no response")
             if payload.get("returnValue") != "success":
                 raise NotYetDrawn(no)
             return {
@@ -59,9 +75,9 @@ def fetch_draw(no: int, retries: int = 4) -> dict:
             }
         except NotYetDrawn:
             raise
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError, TimeoutError) as err:
+        except Exception as err:
             last_err = err
-            time.sleep(2 ** attempt)
+            time.sleep(1 + attempt)
     raise RuntimeError(f"{no}회차 수집 실패: {last_err}")
 
 
@@ -81,17 +97,33 @@ def load_existing(rebuild: bool) -> list[dict]:
         return []
 
 
-def collect(start: int, ceiling: int) -> list[dict]:
-    """start..ceiling 구간을 병렬 수집한다. 미추첨 회차를 만나면 거기서 멈춘다."""
+def collect(start: int, ceiling: int, on_chunk=None) -> list[dict]:
+    """start..ceiling 구간을 청크 단위로 수집한다.
+
+    청크마다 진행 상황을 출력하고 부분 결과를 저장해, 중간에 중단되더라도
+    다음 실행이 이어서 수집할 수 있게 한다.
+    """
     if start > ceiling:
         return []
     found: list[dict] = []
-    pending = list(range(start, ceiling + 1))
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for no, result in zip(pending, pool.map(_safe_fetch, pending)):
-            if result is None:
-                break  # 미추첨 회차 도달 — 이후 회차도 존재하지 않는다
-            found.append(result)
+    CHUNK = 50
+    for base in range(start, ceiling + 1, CHUNK):
+        block = list(range(base, min(base + CHUNK, ceiling + 1)))
+        t0 = time.time()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(_safe_fetch, block))
+        done = [r for r in results if r is not None]
+        found.extend(done)
+        print(f"  {block[0]}~{block[-1]}회차: {len(done)}/{len(block)}건 "
+              f"({time.time() - t0:.1f}s)", flush=True)
+        if on_chunk and done:
+            on_chunk(found)
+        if None in results:
+            break  # 미추첨 회차 도달 — 이후 회차도 존재하지 않는다
+        if not done:
+            raise RuntimeError(
+                f"{block[0]}~{block[-1]}회차를 한 건도 가져오지 못했습니다. "
+                "데이터 소스 접근이 차단된 것으로 보입니다.")
     return found
 
 
@@ -132,7 +164,11 @@ def main() -> int:
     ceiling = expected_latest_round() + 1  # 추정치가 한 주 어긋나도 커버
 
     print(f"보유 {len(draws)}회차 · {start}회차부터 최대 {ceiling}회차까지 확인", flush=True)
-    fresh = collect(start, ceiling)
+
+    def save_partial(found: list[dict]) -> None:
+        write(draws + [d for d in found if d["no"] not in have])
+
+    fresh = collect(start, ceiling, on_chunk=save_partial)
 
     if not fresh:
         print("신규 회차 없음 — 데이터는 이미 최신입니다.")
