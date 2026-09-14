@@ -6,41 +6,66 @@ on:
     paths:
       - '.github/workflows/probe-source.yml'
 
+permissions:
+  contents: write
+
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
-      - name: 요청 형태별 응답 확인
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: 요청 형태별 · 경유지별 응답 확인
         run: |
           set +e
-          echo "러너 국가: $(curl -s --max-time 8 https://ipinfo.io/country)"
-          echo
-
-          probe () {
-            echo "───── $1"
-            shift
-            code=$(curl -s -o /tmp/b.txt -D /tmp/h.txt -w '%{http_code}' --max-time 15 "$@")
-            echo "HTTP $code  (최종 URL: $(curl -s -o /dev/null -w '%{url_effective}' --max-time 15 -L "${@: -1}" 2>/dev/null))"
-            grep -i '^location:' /tmp/h.txt | head -2
-            echo "본문 앞부분: $(head -c 180 /tmp/b.txt | tr -d '\n')"
-            echo
-          }
+          R=probe-result.txt
+          : > $R
+          echo "러너 국가: $(curl -s --max-time 8 https://ipinfo.io/country)" >> $R
+          echo "시각: $(date -u)" >> $R
+          echo >> $R
 
           U='https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+          # 1회차 정답: 10 23 29 33 37 40 + 보너스 16 — 본문에 이 값이 보이면 진짜 데이터다.
 
-          probe "1) 기본" "$U"
-          probe "2) 리다이렉트 추적(-L)" -L "$U"
-          probe "3) 브라우저 UA + Referer + 쿠키" -L \
+          probe () {
+            label="$1"; shift
+            body=$(curl -s --max-time 20 -w '\n__CODE__%{http_code}' "$@")
+            code=$(printf '%s' "$body" | tail -1 | sed 's/__CODE__//')
+            head=$(printf '%s' "$body" | sed '$d' | head -c 220 | tr -d '\r\n')
+            ok="아니오"
+            case "$head" in *'"drwtNo1":10'*|*'drwtNo1'*) ok="예 (JSON 수신)";; esac
+            printf '%-34s HTTP %-4s 유효:%s\n   %s\n\n' "$label" "$code" "$ok" "$head" >> $R
+          }
+
+          probe "1. 기본" "$U"
+          probe "2. -L 리다이렉트 추적" -L "$U"
+          probe "3. 브라우저 헤더+쿠키" -L \
             -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36' \
             -H 'Referer: https://dhlottery.co.kr/gameResult.do?method=byWin' \
             -H 'Accept: application/json, text/plain, */*' \
             -H 'Accept-Language: ko-KR,ko;q=0.9' \
             -c /tmp/c.txt -b /tmp/c.txt "$U"
-          probe "4) 모바일 호스트" -L -A 'Mozilla/5.0 (iPhone)' \
+          probe "4. 모바일 호스트" -L -A 'Mozilla/5.0 (iPhone)' \
             'https://m.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
-          probe "5) apex 호스트" -L -A 'Mozilla/5.0' \
-            'https://dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
-          probe "6) HTTP(평문)" -L -A 'Mozilla/5.0' \
+          probe "5. 평문 HTTP" -L -A 'Mozilla/5.0' \
             'http://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+          probe "6. allorigins 경유" -L \
+            'https://api.allorigins.win/raw?url=https%3A%2F%2Fwww.dhlottery.co.kr%2Fcommon.do%3Fmethod%3DgetLottoNumber%26drwNo%3D1'
+          probe "7. corsproxy 경유" -L \
+            'https://corsproxy.io/?url=https%3A%2F%2Fwww.dhlottery.co.kr%2Fcommon.do%3Fmethod%3DgetLottoNumber%26drwNo%3D1'
+          probe "8. jina reader 경유" -L \
+            'https://r.jina.ai/https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+
+          cat $R
           exit 0
+
+      - name: 결과를 저장소에 커밋
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f probe-result.txt
+          git commit -m "chore(ci): 데이터 소스 진단 결과" || exit 0
+          git push origin HEAD:${{ github.ref_name }}
