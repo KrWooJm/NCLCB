@@ -110,30 +110,68 @@ export function popularity(draws) {
 
 /* ── 번호 생성기 ────────────────────────────────────────── */
 
-/** 각 필터의 정직한 효과 표기. effect: 'none' = 당첨확률 불변 */
+/**
+ * 후보 규칙. 각 규칙이 "당첨 시 분할 인원"에 실제로 효과가 있는지는
+ * 가정하지 않고 매번 데이터에서 직접 측정한다(아래 filterEvidence).
+ */
 export const FILTERS = [
-  { id: 'highBand', label: '32 이상 번호 2개 이상 포함', effect: 'payout',
-    why: '생일(1~31)로만 찍는 구매자가 많아, 32 이상을 섞으면 동시 당첨자가 줄어듭니다.' },
-  { id: 'noTriple', label: '3연속 번호 배제', effect: 'payout',
-    why: '용지에 줄을 긋는 패턴 구매가 많은 구간을 피합니다.' },
-  { id: 'noSameTail', label: '같은 끝수 3개 이상 배제', effect: 'payout',
+  { id: 'highSum', label: '번호 합계 171 이상',
+    test: (f) => f.sum >= 171,
+    why: '합계가 큰 조합은 구매가 적습니다. 큰 번호를 잘 안 고르기 때문입니다.' },
+  { id: 'hasConsecutive', label: '연속된 번호 한 쌍 이상 포함',
+    test: (f) => f.maxRun >= 2,
+    why: '연속수는 "당첨될 리 없다"고 여겨 기피되지만, 실제 출현 빈도는 정상입니다.' },
+  { id: 'avoidBirthday', label: '32 이상 번호 2개 이상 포함',
+    test: (f) => f.high >= 2,
+    why: '생일(1~31)로만 찍는 구매자를 피합니다.' },
+  { id: 'noSameTail', label: '같은 끝수 3개 이상 배제',
+    test: (f) => f.maxTail < 3,
     why: '끝수 이론을 따르는 구매자와의 중복을 피합니다.' },
-  { id: 'noArith', label: '등차수열 배제', effect: 'payout',
+  { id: 'noArith', label: '등차수열 배제',
+    test: (f) => !f.isArithmetic,
     why: '5·10·15·20·25·30 같은 규칙 조합은 다수가 동시에 선택합니다.' },
-  { id: 'notPastWinner', label: '과거 1등 조합과 완전 일치 배제', effect: 'payout',
+  { id: 'notPastWinner', label: '과거 1등 조합과 완전 일치 배제',
+    test: null, // 과거 당첨 조합은 정의상 모두 "당첨"이라 효과를 측정할 수 없다
     why: '지난 당첨번호를 그대로 사는 구매자가 꾸준히 존재합니다.' },
-  { id: 'sumBand', label: '번호 합계 90~210', effect: 'none',
-    why: '확률에는 영향이 없습니다. 극단적 조합을 걸러 구성을 고르게 유지할 뿐입니다.' },
 ];
+
+/**
+ * 각 규칙이 실제로 "덜 인기 있는" 조합을 고르는지 측정한다.
+ * 1등 당첨자 수(판매액 정규화)가 규칙 통과 조합에서 더 낮을수록 효과가 있다.
+ * lift < 1 이고 p < 0.05 면 근거 있음으로 본다.
+ */
+export function filterEvidence(draws) {
+  const usable = draws.filter((d) => d.totalSales > 0);
+  const rate = (d) => (d.firstWinners / d.totalSales) * 1e11;
+
+  return FILTERS.map((f) => {
+    if (!f.test || usable.length < 100) {
+      return { ...f, measurable: false, significant: false, recommended: true };
+    }
+    const pass = [], fail = [];
+    usable.forEach((d) => (f.test(features(d.numbers)) ? pass : fail).push(rate(d)));
+    if (pass.length < 30 || fail.length < 30) {
+      return { ...f, measurable: false, significant: false, recommended: true };
+    }
+    const mean = (v) => v.reduce((a, b) => a + b, 0) / v.length;
+    const t = twoSampleZ(pass, fail);
+    const lift = mean(pass) / mean(fail);
+    const significant = t.p < 0.05 && lift < 1;
+    return { ...f, measurable: true, lift, p: t.p, n: pass.length,
+      significant, recommended: significant };
+  });
+}
 
 function passes(nums, opts, pastSet) {
   const f = features(nums);
-  if (opts.highBand && f.high < 2) return false;
-  if (opts.noTriple && f.maxRun >= 3) return false;
-  if (opts.noSameTail && f.maxTail >= 3) return false;
-  if (opts.noArith && f.isArithmetic) return false;
-  if (opts.sumBand && (f.sum < 90 || f.sum > 210)) return false;
-  if (opts.notPastWinner && pastSet.has(nums.join(','))) return false;
+  for (const rule of FILTERS) {
+    if (!opts[rule.id]) continue;
+    if (rule.id === 'notPastWinner') {
+      if (pastSet.has(nums.join(','))) return false;
+    } else if (!rule.test(f)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -171,6 +209,39 @@ function weightedTicket(rng, usage, target) {
 const overlap = (a, b) => a.filter((x) => b.includes(x)).length;
 
 /**
+ * 무작위 조합을 규칙에 맞게 최소한으로 고친다.
+ * 규칙이 엄격할 때 거부 샘플링만 쓰면 특정 번호대에 쏠리고 느려지므로,
+ * 조건을 어긴 자리만 바꿔 조합 분포를 넓게 유지한다.
+ */
+function repair(nums, opts, rng) {
+  let t = nums.slice().sort((a, b) => a - b);
+  const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+
+  // 연속수 한 쌍 만들기 — 한 자리를 이웃 번호로 교체한다
+  if (opts.hasConsecutive && !t.some((n, i) => i > 0 && n === t[i - 1] + 1)) {
+    const anchor = pick(t);
+    const neighbours = [anchor - 1, anchor + 1]
+      .filter((x) => x >= 1 && x <= 45 && !t.includes(x));
+    if (neighbours.length) {
+      const victim = pick(t.filter((x) => x !== anchor));
+      t = t.map((x) => (x === victim ? pick(neighbours) : x)).sort((a, b) => a - b);
+    }
+  }
+
+  // 합계 채우기 — 가장 작은 수를 남는 큰 수로 올린다
+  if (opts.highSum) {
+    let guard = 0;
+    while (t.reduce((a, b) => a + b, 0) < 171 && guard++ < 24) {
+      const room = [];
+      for (let n = t[t.length - 1] + 1; n <= 45; n++) if (!t.includes(n)) room.push(n);
+      if (!room.length) break;
+      t = [...t.slice(1), pick(room)].sort((a, b) => a - b);
+    }
+  }
+  return new Set(t).size === 6 ? t : nums;
+}
+
+/**
  * games 장의 조합을 생성한다.
  * 서로 겹치는 번호를 maxOverlap 이하로 제한해 포트폴리오를 분산시킨다.
  */
@@ -184,20 +255,20 @@ export function generate({ games, opts, pastDraws, seed, maxOverlap = 2 }) {
   let stall = 0;
 
   while (tickets.length < games) {
-    const t = weightedTicket(rng, usage, target);
+    const t = repair(weightedTicket(rng, usage, target), opts, rng);
     const ok = passes(t, opts, pastSet)
       && tickets.every((prev) => overlap(prev, t) <= limit);
     if (ok) {
       tickets.push(t);
       t.forEach((x) => usage[x]++);
       stall = 0;
-    } else if (++stall > 3000) {
-      // 제약이 과해 더 못 뽑으면 겹침 한도만 한 칸 완화한다(필터는 유지)
+    } else if (++stall > 4000) {
+      // 제약이 과해 더 못 뽑으면 겹침 한도만 한 칸 완화한다(규칙 자체는 유지)
       limit = Math.min(PICK, limit + 1);
       stall = 0;
     }
   }
-  return { tickets, usage };
+  return { tickets, usage, maxOverlapUsed: limit };
 }
 
 /* ── 백테스트 ───────────────────────────────────────────── */
@@ -235,11 +306,12 @@ const STRATEGIES = {
     return (rng) => pickFrom(keep, rng);
   },
   portfolio: () => (rng) => {
-    // 이 사이트의 전략: 인기 회피 필터만 적용(확률 중립)
-    for (let i = 0; i < 200; i++) {
+    // 이 사이트의 전략: 인기 회피 규칙만 적용(당첨 확률에는 중립)
+    const opts = { highSum: true, hasConsecutive: true, avoidBirthday: true,
+      noSameTail: true, noArith: true };
+    for (let i = 0; i < 300; i++) {
       const t = randomTicket(rng);
-      if (passes(t, { highBand: true, noTriple: true, noSameTail: true,
-        noArith: true, sumBand: true }, new Set())) return t;
+      if (passes(t, opts, new Set())) return t;
     }
     return randomTicket(rng);
   },

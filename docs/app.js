@@ -1,5 +1,5 @@
 import { TIER_ODDS, P_ANY_PRIZE, TICKET_PRICE, MAX_NUM, PICK } from './engine.js';
-import { analyse, popularity, backtest, generate, features, FILTERS } from './analysis.js';
+import { analyse, popularity, backtest, generate, filterEvidence } from './analysis.js';
 import { frequencyChart, groupedBars, barsH } from './charts.js';
 
 const $ = (s) => document.querySelector(s);
@@ -42,6 +42,8 @@ $('#updated').textContent = DATA.updatedAt
   ? new Date(DATA.updatedAt).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
   : '-';
 
+$('#source').textContent = DATA.source || '알 수 없음';
+
 $('#latest-numbers').innerHTML = latest.numbers
   .map((n) => `<span class="ball ${ballClass(n)}">${n}</span>`).join('')
   + `<span style="color:var(--text-3);margin:0 4px">+</span>`
@@ -70,14 +72,25 @@ function renderReality(games) {
       <div class="d">투입액의 약 ${Math.round((ev / spend) * 100)}% — 구조적 손실입니다</div></div>`;
 }
 
-/* ── 필터 토글 ─────────────────────────────────────────── */
-$('#toggles').innerHTML = FILTERS.map((f) => `
-  <label class="toggle">
-    <input type="checkbox" data-filter="${f.id}" checked>
-    <span><span class="tl">${f.label}</span>
-      <span class="chip ${f.effect}">${f.effect === 'payout' ? '기대 수령액 ↑' : '확률 영향 없음'}</span>
+/* ── 필터 토글 — 효과를 데이터에서 측정해 함께 표시한다 ── */
+const EVIDENCE = filterEvidence(DRAWS);
+$('#toggles').innerHTML = EVIDENCE.map((f) => {
+  let chip;
+  if (!f.measurable) {
+    chip = '<span class="chip none">측정 불가 · 논리적 근거</span>';
+  } else if (f.significant) {
+    const cut = Math.round((1 - f.lift) * 100);
+    chip = `<span class="chip payout">동시 당첨자 ${cut}% 적음 · p${
+      f.p < 0.001 ? '&lt;0.001' : '=' + f.p.toFixed(3)}</span>`;
+  } else {
+    chip = `<span class="chip none">효과 확인 안 됨 · p=${f.p.toFixed(2)}</span>`;
+  }
+  return `<label class="toggle">
+    <input type="checkbox" data-filter="${f.id}"${f.recommended ? ' checked' : ''}>
+    <span><span class="tl">${f.label}</span>${chip}
       <span class="tw">${f.why}</span></span>
-  </label>`).join('');
+  </label>`;
+}).join('');
 
 /* ── 번호 생성 ─────────────────────────────────────────── */
 function runGenerate() {
@@ -90,7 +103,7 @@ function runGenerate() {
     : (Date.now() & 0x7fffffff);
 
   const t0 = performance.now();
-  const { tickets, usage } = generate({ games, opts, pastDraws: DRAWS, seed });
+  const { tickets, usage, maxOverlapUsed } = generate({ games, opts, pastDraws: DRAWS, seed });
   const ms = Math.round(performance.now() - t0);
 
   $('#tickets').innerHTML = tickets.map((t, i) => `
@@ -99,10 +112,18 @@ function runGenerate() {
 
   const used = usage.slice(1);
   const cover = used.filter((u) => u > 0).length;
+  const sums = tickets.map((t) => t.reduce((a, b) => a + b, 0));
+  const skewed = opts.highSum;
   $('#gen-summary').innerHTML = `
     <b>${games}게임</b> 생성 (${fmtInt(games * TICKET_PRICE)}원) · 45개 번호 중
-    <b>${cover}개</b> 사용 · 번호별 ${Math.min(...used)}~${Math.max(...used)}회 등장 ·
-    게임 간 중복 최대 ${maxOverlap(tickets)}개 · ${ms}ms`;
+    <b>${cover}개</b> 사용 · 게임 간 중복 최대 ${maxOverlap(tickets)}개 ·
+    합계 ${Math.min(...sums)}~${Math.max(...sums)} · ${ms}ms
+    ${maxOverlapUsed > 2 ? '<br><span class="mid">규칙이 엄격해 중복 한도를 '
+      + maxOverlapUsed + '개까지 완화했습니다.</span>' : ''}
+    ${skewed ? `<br><span style="color:var(--text-3)">조합이 큰 번호 쪽으로 치우쳐 보이는 것은
+      정상입니다 — "합계 171 이상" 규칙을 켜면 필연적으로 그렇게 됩니다. 당첨 확률은
+      그대로이고, 대신 그 조합을 함께 산 사람이 적습니다. 균등하게 퍼진 조합을 원하시면
+      그 규칙을 끄세요.</span>` : ''}`;
   renderReality(games);
   window.__TICKETS__ = tickets;
 }
@@ -155,21 +176,30 @@ $('#carry-theory').textContent = `이론값 66.1% — 실제로 성립하는 몇
   + `"어느 번호가" 재출현할지는 전혀 알려주지 않아 예측에 쓸 수 없습니다.`;
 
 /* ── 인기도 분석 ───────────────────────────────────────── */
-if (POP && POP.lift) {
-  const l = POP.lift;
-  const stronger = l.ratio > 1;
-  $('#pop-summary').innerHTML = `
-    1등 당첨자 수는 "그 조합을 몇 명이 샀는가"의 직접 관측치입니다.
-    판매액으로 정규화해 ${fmtInt(POP.sampleSize)}회차를 비교하면,
-    <b>1~31 안에서만 나온 당첨번호</b>의 1등 당첨자 수가
-    32 이상을 포함한 경우의 <b class="${stronger ? 'bad' : 'ok'}">${l.ratio.toFixed(2)}배</b>
-    입니다 (p = ${l.p < 0.001 ? '&lt;0.001' : l.p.toFixed(3)}).
-    ${stronger && l.p < 0.05
-      ? '생일 번호대에 구매가 몰린다는 뜻이고, 이것이 <b>32 이상 포함</b> 필터의 근거입니다. 당첨 확률은 그대로지만 당첨 시 나눠 갖는 인원이 줄어듭니다.'
-      : '이번 데이터에서는 통계적으로 뚜렷하지 않습니다. 필터는 유지하되 효과를 과장하지 않습니다.'}`;
-} else {
-  $('#pop-summary').textContent = '인기도 분석에 필요한 판매액 데이터가 부족합니다.';
-}
+const winning = EVIDENCE.filter((f) => f.significant);
+$('#pop-summary').innerHTML = POP
+  ? `1등 당첨자 수는 "그 조합을 몇 명이 샀는가"의 직접 관측치입니다.
+     판매액으로 정규화해 ${fmtInt(POP.sampleSize)}회차를 비교하면, 조합 유형별로
+     동시 당첨자 수가 실제로 다릅니다.
+     ${winning.length
+       ? `현재 데이터에서 통계적으로 뚜렷한 것은 <b>${winning.map((f) => f.label).join('</b>, <b>')}</b>
+          입니다. 당첨 확률은 전혀 달라지지 않지만, 당첨됐을 때 나눠 갖는 인원이 줄어듭니다.`
+       : '다만 현재 데이터에서 통계적으로 뚜렷한 차이는 확인되지 않았습니다.'}`
+  : '인기도 분석에 필요한 판매액 데이터가 부족합니다.';
+
+$('#evidence-body').innerHTML = EVIDENCE.map((f) => {
+  if (!f.measurable) {
+    return `<tr><td>${f.label}</td><td colspan="3" style="color:var(--text-3)">
+      과거 당첨 조합은 정의상 모두 당첨이라 효과를 측정할 수 없습니다</td>
+      <td class="verdict mid">논리적 근거</td></tr>`;
+  }
+  return `<tr><td>${f.label}</td>
+    <td>${f.lift.toFixed(3)}배</td>
+    <td>${f.p < 0.001 ? '&lt;0.001' : f.p.toFixed(3)}</td>
+    <td>${fmtInt(f.n)}회차</td>
+    <td class="verdict ${f.significant ? 'ok' : ''}">${
+      f.significant ? '근거 있음 — 기본 적용' : '차이 없음 — 기본 해제'}</td></tr>`;
+}).join('');
 
 /* ── 백테스트 ──────────────────────────────────────────── */
 const NAMES = {
@@ -183,8 +213,11 @@ function runBacktest() {
   setTimeout(() => {
     BT = backtest(DRAWS, { ticketsPerDraw: 20, warmup: 100, seed: 7 });
     const theory = (PICK * PICK) / MAX_NUM;
+    // 기준선과 4번 비교하므로 본페로니 보정을 적용한다.
+    // 보정 없이 0.05 를 쓰면 4번 중 한 번꼴(약 19%)로 우연한 '차이'가 나온다.
+    const ALPHA = 0.05 / (BT.length - 1);
     $('#bt-body').innerHTML = BT.map((r) => {
-      const same = r.name === 'random' || r.p > 0.05;
+      const same = r.name === 'random' || r.p > ALPHA;
       return `<tr>
         <td>${NAMES[r.name]}</td>
         <td>${r.mean.toFixed(4)}</td>
@@ -192,11 +225,18 @@ function runBacktest() {
         <td>${r.name === 'random' ? '—' : r.p.toFixed(3)}</td>
         <td>${pct(r.prizeRate, 3)}</td>
         <td class="verdict ${same ? 'ok' : 'bad'}">${r.name === 'random' ? '기준'
-          : same ? '무작위와 차이 없음' : '차이 있음'}</td></tr>`;
+          : same ? (r.p > 0.05 ? '무작위와 차이 없음' : '차이 없음 (다중검정 보정)')
+          : '차이 있음'}</td></tr>`;
     }).join('');
-    $('#bt-status').innerHTML = `${fmtInt(BT[0].games)}게임 × 5전략 시뮬레이션 완료.
+    const anyReal = BT.some((r) => r.name !== 'random' && r.p <= ALPHA);
+    $('#bt-status').innerHTML = `${fmtInt(BT[0].games)}게임 × ${BT.length}전략 시뮬레이션 완료.
       이론 기대 적중 개수는 <b>${theory.toFixed(4)}</b>개이며, 모든 전략이 이 값 주변에 머뭅니다.
-      p값이 0.05보다 크다는 것은 <b>무작위와 구별할 수 없다</b>는 뜻입니다.`;
+      기준선과 ${BT.length - 1}번 비교하므로 유의수준에 본페로니 보정을 적용해
+      <b>p &lt; ${ALPHA.toFixed(4)}</b> 를 기준으로 판정합니다
+      (보정 없이 0.05 를 쓰면 아무 효과가 없어도 약 19% 확률로 '차이'가 나옵니다).
+      ${anyReal
+        ? '<b class="bad">기준을 통과한 전략이 있습니다 — 표를 확인하세요.</b>'
+        : '<b class="ok">어떤 전략도 무작위를 이기지 못했습니다.</b>'}`;
   }, 20);
 }
 $('#bt-run').addEventListener('click', runBacktest);

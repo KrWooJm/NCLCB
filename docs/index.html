@@ -113,6 +113,21 @@
         <span>판매액 1,000억원당 1등 당첨자 수 (많을수록 그 유형에 구매가 몰린다는 뜻)</span>
       </div>
       <div id="chart-pop" class="chart"></div>
+
+      <h3 style="margin-top:22px">생성 규칙별 실측 효과</h3>
+      <p class="note" style="margin-top:4px">배수가 1보다 작을수록 그 규칙을 통과한 조합에
+        동시 당첨자가 적다는 뜻입니다. 가정이 아니라 매 회차 데이터에서 다시 측정하며,
+        근거가 확인된 규칙만 기본으로 켭니다.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>규칙</th><th>동시 당첨자 배수</th><th>p값</th>
+            <th>해당 회차</th><th>판정</th></tr></thead>
+          <tbody id="evidence-body"></tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:12px;margin-bottom:0">규칙 6개를 동시에 검정했으므로
+        다중비교를 감안해야 합니다. p &lt; 0.001 인 항목은 본페로니 보정(0.05/6 ≈ 0.008)을
+        적용해도 유의합니다.</p>
     </section>
 
     <!-- 백테스트 -->
@@ -139,7 +154,7 @@
   <footer>
     <p><b>데이터 갱신:</b> 매주 일요일 00:10 (KST) GitHub Actions 가 동행복권 공식 API에서
       신규 회차를 자동 수집해 커밋합니다. 1242회, 1243회… 회차가 늘어날 때마다 위 분석이 전부 다시 계산됩니다.</p>
-    <p style="margin-top:6px">마지막 수집: <span id="updated"></span> · 출처: 동행복권 공식 API (dhlottery.co.kr)</p>
+    <p style="margin-top:6px">마지막 수집: <span id="updated"></span> · 수집 경로: <span id="source"></span></p>
     <p style="margin-top:10px">이 사이트는 당첨을 보장하지 않으며, 어떤 번호도 다른 번호보다 당첨 확률이 높지 않습니다.
       로또 구매는 여가 활동의 범위 안에서, 잃어도 괜찮은 금액으로만 하시기 바랍니다.
       도박 문제 상담: 한국도박문제예방치유원 <b>1336</b>.</p>
