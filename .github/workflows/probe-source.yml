@@ -1,0 +1,42 @@
+name: 데이터 소스 진단
+
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: 요청 형태별 응답 확인
+        run: |
+          set +e
+          echo "러너 국가: $(curl -s --max-time 8 https://ipinfo.io/country)"
+          echo
+
+          probe () {
+            echo "───── $1"
+            shift
+            code=$(curl -s -o /tmp/b.txt -D /tmp/h.txt -w '%{http_code}' --max-time 15 "$@")
+            echo "HTTP $code  (최종 URL: $(curl -s -o /dev/null -w '%{url_effective}' --max-time 15 -L "${@: -1}" 2>/dev/null))"
+            grep -i '^location:' /tmp/h.txt | head -2
+            echo "본문 앞부분: $(head -c 180 /tmp/b.txt | tr -d '\n')"
+            echo
+          }
+
+          U='https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+
+          probe "1) 기본" "$U"
+          probe "2) 리다이렉트 추적(-L)" -L "$U"
+          probe "3) 브라우저 UA + Referer + 쿠키" -L \
+            -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36' \
+            -H 'Referer: https://dhlottery.co.kr/gameResult.do?method=byWin' \
+            -H 'Accept: application/json, text/plain, */*' \
+            -H 'Accept-Language: ko-KR,ko;q=0.9' \
+            -c /tmp/c.txt -b /tmp/c.txt "$U"
+          probe "4) 모바일 호스트" -L -A 'Mozilla/5.0 (iPhone)' \
+            'https://m.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+          probe "5) apex 호스트" -L -A 'Mozilla/5.0' \
+            'https://dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+          probe "6) HTTP(평문)" -L -A 'Mozilla/5.0' \
+            'http://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=1'
+          exit 0
