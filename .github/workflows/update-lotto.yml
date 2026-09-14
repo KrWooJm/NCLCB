@@ -1,0 +1,49 @@
+name: 로또 당첨번호 자동 갱신
+
+on:
+  schedule:
+    # 추첨은 매주 토요일 20:45 KST. 여유를 두고 일요일 00:10 KST(= 토 15:10 UTC)에 수집한다.
+    - cron: '10 15 * * 6'
+    # 1차 수집이 실패했을 경우를 대비한 재시도 — 일요일 11:00 KST(= 일 02:00 UTC)
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+  push:
+    # 수집 스크립트가 바뀌면 즉시 한 번 돌려 데이터를 채운다.
+    paths:
+      - 'scripts/update_draws.py'
+      - '.github/workflows/update-lotto.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lotto-update-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 신규 회차 수집
+        run: python3 scripts/update_draws.py
+
+      - name: 변경 사항 커밋
+        run: |
+          if git diff --quiet -- docs/data; then
+            echo "신규 회차 없음 — 커밋 생략"
+            exit 0
+          fi
+          latest=$(python3 -c "import json;print(json.load(open('docs/data/draws.json'))['latestRound'])")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data
+          git commit -m "chore(data): ${latest}회차까지 당첨번호 갱신"
+          git push origin HEAD:${{ github.ref_name }}

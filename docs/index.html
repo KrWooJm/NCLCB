@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko" >
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로또 6/45 데이터 분석기</title>
+<meta name="description" content="동행복권 전 회차 데이터를 매주 자동 수집해 통계 분석하고, 5만원(50게임) 포트폴리오를 생성합니다.">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%232a78d6'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>6</text></svg>">
+<script src="data/draws.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="top">
+      <div>
+        <h1>로또 6/45 데이터 분석기</h1>
+        <p class="sub">동행복권 전 회차 당첨 데이터를 매주 자동으로 수집해 분석하고,
+          5만원 예산의 구매 조합을 생성합니다. 무엇이 근거 있고 무엇이 미신인지 수치로 구분해 보여줍니다.</p>
+      </div>
+      <button id="theme" class="theme-btn">테마 전환</button>
+    </div>
+    <span class="badge"><span class="dot"></span><span id="round-badge">로딩 중</span></span>
+  </header>
+
+  <div id="app">
+
+    <div class="notice">
+      <p><strong>먼저 분명히 해둡니다.</strong> 로또는 매 회차 독립시행이며,
+        과거 데이터로 다음 회차 번호를 맞힐 확률을 높이는 방법은 <b>존재하지 않습니다</b>.
+        어떤 조합이든 당첨 확률은 똑같이 1/8,145,060 입니다.</p>
+      <p>그래서 이 도구는 "잘 맞는 번호"를 주장하지 않습니다. 대신 실제로 통제 가능한 두 가지만 최적화합니다 —
+        <b>① 당첨됐을 때 상금을 나눠 가질 사람 수를 줄이는 것</b>(인기 조합 회피),
+        <b>② 50게임을 서로 겹치지 않게 분산시키는 것</b>.
+        그리고 모든 전략의 실제 성적을 <a href="#backtest">과거 전 회차 백테스트</a>로 검증해 공개합니다.</p>
+    </div>
+
+    <!-- 최신 회차 -->
+    <section class="card">
+      <h2>최신 당첨번호</h2>
+      <p class="note">이 데이터를 기준으로 아래 모든 분석이 계산됩니다.</p>
+      <div id="latest-numbers" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap"></div>
+    </section>
+
+    <!-- 생성기 -->
+    <section class="card">
+      <h2>구매 조합 생성</h2>
+      <p class="note">예산을 게임 수로 환산해, 아래 필터를 모두 통과하고 서로 중복이 적은 조합을 만듭니다.</p>
+      <div class="controls">
+        <div class="field"><label for="budget">예산 (원)</label>
+          <input id="budget" type="number" value="50000" min="1000" max="200000" step="1000"></div>
+        <div class="field"><label for="seed">시드 (비워두면 매번 랜덤)</label>
+          <input id="seed" type="text" placeholder="예: 1241" ></div>
+        <button id="go" class="primary">번호 생성</button>
+        <button id="copy" class="ghost">번호 복사</button>
+      </div>
+      <div id="toggles" class="toggles" style="margin-bottom:18px"></div>
+      <p class="note" id="gen-summary" style="margin-bottom:14px"></p>
+      <div id="tickets" class="tickets"></div>
+    </section>
+
+    <!-- 현실 계산 -->
+    <section class="card">
+      <h2>이 구매의 실제 기댓값</h2>
+      <p class="note">생성한 게임 수 기준으로 계산한, 과장 없는 수치입니다.</p>
+      <div id="reality" class="tiles"></div>
+      <p class="note" style="margin-top:14px;margin-bottom:0">로또 판매액의 약 50%만 당첨금으로 배분되므로,
+        어떤 번호를 고르든 장기 기대수익률은 마이너스입니다. 이 도구는 그 사실을 바꾸지 못하며, 바꾼다고 주장하지도 않습니다.</p>
+    </section>
+
+    <!-- 통계 -->
+    <section class="card">
+      <h2>번호별 출현 통계</h2>
+      <p class="note" id="uniformity"></p>
+      <div class="legend" style="margin-top:16px">
+        <span><i style="background:var(--series-1)"></i>번호별 실제 출현 횟수</span>
+        <span><i style="background:var(--series-2)"></i>확률상 기대 출현 횟수</span>
+        <span><i style="background:var(--series-1);opacity:.25"></i>±2σ 기대 범위</span>
+      </div>
+      <div id="chart-freq" class="chart"></div>
+
+      <details>
+        <summary>핫넘버 · 콜드넘버 표 보기 (예측력은 없습니다)</summary>
+        <div class="tbl-wrap" style="margin-top:10px">
+          <table><tbody id="hotcold"></tbody></table>
+        </div>
+        <p class="note" style="margin-top:8px;margin-bottom:0">많은 사이트가 이 표를 근거로 번호를 추천합니다.
+          하지만 위 카이제곱 검정이 보여주듯 이 편차는 전부 무작위 변동 범위 안에 있습니다.
+          아래 백테스트에서 핫/콜드 전략이 무작위를 이기지 못하는 것으로 다시 확인됩니다.</p>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>홀수 개수 분포 — 관측 vs 이론</h2>
+      <p class="note">실제 분포가 확률 이론값과 겹친다면, 그것은 추첨기가 공정하다는 뜻이고
+        동시에 "패턴을 읽어 예측한다"는 주장에 근거가 없다는 뜻이기도 합니다.</p>
+      <div class="legend">
+        <span><i style="background:var(--series-1)"></i>실제 관측</span>
+        <span><i style="background:var(--series-2)"></i>확률 이론값</span>
+      </div>
+      <div id="chart-odd" class="chart"></div>
+      <p class="note" style="margin-top:14px;margin-bottom:0">
+        <b>이월수</b>(직전 회차 번호가 다시 나옴) 실제 발생률: <b id="carry"></b>.
+        <span id="carry-theory"></span></p>
+    </section>
+
+    <!-- 인기도 -->
+    <section class="card">
+      <h2>어떤 조합에 구매가 몰리는가 — 1등 당첨자 수 실증 분석</h2>
+      <p class="note" id="pop-summary"></p>
+      <div class="legend" style="margin-top:16px">
+        <span>판매액 1,000억원당 1등 당첨자 수 (많을수록 그 유형에 구매가 몰린다는 뜻)</span>
+      </div>
+      <div id="chart-pop" class="chart"></div>
+    </section>
+
+    <!-- 백테스트 -->
+    <section class="card" id="backtest">
+      <h2>백테스트 — 전략이 무작위를 이기는가?</h2>
+      <p class="note">각 전략을 과거 전 회차에 적용합니다. N회차를 맞힐 때는 N회차 이전 데이터만 사용해
+        미래 정보 누수를 차단했습니다. 이 사이트 자신의 전략도 똑같이 검증 대상에 포함합니다.</p>
+      <button id="bt-run" class="primary" style="margin-bottom:16px">백테스트 실행</button>
+      <p class="note" id="bt-status"></p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>전략</th><th>평균 적중 개수</th><th>무작위 대비</th>
+            <th>p값</th><th>당첨률(5등↑)</th><th>판정</th></tr></thead>
+          <tbody id="bt-body"><tr><td colspan="6" style="color:var(--text-3)">실행 버튼을 눌러주세요.</td></tr></tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:14px;margin-bottom:0">이 표가 이 사이트에서 가장 중요한 부분입니다.
+        번호 추천 서비스가 "적중률 OO%"를 내세운다면, 그 수치를 반드시 무작위 기준선과 비교해 보세요.
+        대부분 기준선과 같거나 오히려 낮습니다.</p>
+    </section>
+
+  </div>
+
+  <footer>
+    <p><b>데이터 갱신:</b> 매주 일요일 00:10 (KST) GitHub Actions 가 동행복권 공식 API에서
+      신규 회차를 자동 수집해 커밋합니다. 1242회, 1243회… 회차가 늘어날 때마다 위 분석이 전부 다시 계산됩니다.</p>
+    <p style="margin-top:6px">마지막 수집: <span id="updated"></span> · 출처: 동행복권 공식 API (dhlottery.co.kr)</p>
+    <p style="margin-top:10px">이 사이트는 당첨을 보장하지 않으며, 어떤 번호도 다른 번호보다 당첨 확률이 높지 않습니다.
+      로또 구매는 여가 활동의 범위 안에서, 잃어도 괜찮은 금액으로만 하시기 바랍니다.
+      도박 문제 상담: 한국도박문제예방치유원 <b>1336</b>.</p>
+  </footer>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
