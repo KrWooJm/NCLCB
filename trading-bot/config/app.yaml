@@ -1,0 +1,15 @@
+# 실행 모드: notify(기본, 텔레그램 신호 알림) | paper(모의투자 주문)
+# live(실계좌)는 사용자가 명시적으로 요청하기 전까지 미구현 — 지정하면 시작 시 거부된다.
+executor: notify
+
+markets_enabled: [domestic, us]
+
+log:
+  level: INFO
+  dir: logs
+  timezone: Asia/Seoul      # 로그 타임스탬프 표기 시간대
+  max_bytes: 5242880        # 5MB
+  backup_count: 10
+
+notify:
+  telegram_enabled: false   # 5단계(NotifyExecutor)에서 활성화

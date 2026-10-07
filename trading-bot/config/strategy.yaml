@@ -1,0 +1,90 @@
+# 시가 범위 돌파(ORB) + 분할 익절 전략 파라미터.
+# 모든 수치는 초기값이며 백테스트로 검증·조정한다. 코드에는 기본값을 두지 않는다.
+# 비율은 소수로 쓴다 (예: 0.02 = 2%).
+
+markets:
+  domestic:
+    timezone: Asia/Seoul
+    currency: KRW
+    capital: 1000000
+    session:
+      open: "09:00"
+      close: "15:30"
+    entry_window:
+      start: "09:15"
+      end: "11:00"
+    max_price_vs_limit_up: 0.9      # 현재가 < 상한가 × 0.9 일 때만 진입
+    universe:
+      min_market_cap: 100000000000  # 1,000억 원
+      min_prev_turnover: 10000000000  # 전일 거래대금 100억 원
+      min_avg_turnover_20d: null
+      min_price: 2000
+      max_price: 100000
+      min_gap: null                 # 국내는 갭 조건으로 감시목록을 거르지 않는다
+      exclude: [managed, investment_warning, investment_risk, halted, spac, preferred, etf, etn]
+      watchlist_size: 30            # 전일 거래대금 상위
+    costs:                          # TODO: 실제 증권사·연도 기준 값으로 확인 후 수정
+      commission_rate: 0.00015      # 매수·매도 각각
+      sell_tax_rate: 0.0020         # 매도 시 거래세
+      fx_spread_rate: 0.0
+      slippage_rate: 0.001
+
+  us:
+    timezone: America/New_York
+    currency: USD
+    capital: 1000000                # 원화 기준 운용 자금
+    session:
+      open: "09:30"
+      close: "16:00"
+    entry_window:
+      start: "09:45"
+      end: "11:30"
+    max_price_vs_limit_up: null     # 미국은 상한가 없음
+    universe:
+      min_market_cap: null
+      min_prev_turnover: null
+      min_avg_turnover_20d: 20000000  # 20일 평균 거래대금 $20M
+      min_price: 5
+      max_price: 100
+      min_gap: 0.02                 # 프리마켓 갭 +2% 이상
+      exclude: [etf, adr, otc]
+      watchlist_size: 20            # 프리마켓 거래량 상위
+    costs:                          # TODO: 실제 증권사·연도 기준 값으로 확인 후 수정
+      commission_rate: 0.0025
+      sell_tax_rate: 0.0
+      fx_spread_rate: 0.0025        # 환전 스프레드
+      slippage_rate: 0.001
+
+entry:
+  bar_minutes: 5
+  opening_range_minutes: 15
+  require_above_vwap: true
+  relative_volume:
+    lookback_days: 20
+    multiplier: 2.0                 # 당일 누적 거래량 > 20일 같은 시각 평균 × 2
+  gap:
+    min: 0.0
+    max: 0.08
+
+exit:
+  stop_loss_pct: 0.02               # 진입가 -2%
+  use_or_low_stop: true             # OR 저가가 진입가에 더 가까우면 그쪽을 손절가로
+  take_profit_1:
+    pct: 0.03
+    fraction: 0.5                   # 보유 수량의 50% 익절
+    move_stop_to_breakeven: true
+  take_profit_2:
+    pct: 0.05                       # 잔량 전량 익절
+  flatten_before_close_minutes: 15  # 1차 익절 전이면 장 마감 15분 전 전량 청산
+  max_holding_days: 3               # 1차 익절 후 잔량 최대 보유 거래일
+
+sizing:
+  risk_per_trade: 0.01              # 계좌의 1%
+  max_position_fraction: 0.5        # 1종목 투입금 ≤ 계좌의 50%
+  min_qty: 2                        # 2주 미만이면 진입하지 않음
+
+risk:                               # 시장별로 독립 적용
+  max_drawdown: 0.10                # -10% 도달 시 해당 시장 전체 매매 정지
+  daily_loss_limit: 0.03            # -3% 도달 시 당일 신규 진입 중단
+  max_consecutive_stop_losses: 4    # 4회 연속 손절 시 당일 매매 중단
+  max_positions: 2                  # 시장별 최대 동시 보유
