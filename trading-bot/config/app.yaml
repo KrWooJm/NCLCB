@@ -1,0 +1,54 @@
+# 실행 모드: notify(기본, 텔레그램 신호 알림) | paper(모의투자 주문)
+# live(실계좌)는 사용자가 명시적으로 요청하기 전까지 미구현 — 지정하면 시작 시 거부된다.
+executor: notify
+
+markets_enabled: [domestic, us]
+
+log:
+  level: INFO
+  dir: logs
+  timezone: Asia/Seoul      # 로그 타임스탬프 표기 시간대
+  max_bytes: 5242880        # 5MB
+  backup_count: 10
+
+notify:
+  telegram_enabled: false   # 5단계(NotifyExecutor)에서 활성화
+
+kis:
+  # 시세 조회는 실전 서버 + 실전 앱키(조회 전용). 이 클라이언트는 시세·순위 경로 외 호출을 거부한다.
+  # 주문은 6단계에서 모의 서버 + 모의 앱키로만 한다.
+  requests_per_second: 3    # 초과 시 EGW00201. 신규 앱키는 한도가 낮을 수 있어 보수적으로 시작, 안정되면 올린다
+  max_retries: 3
+  timeout_seconds: 10
+
+data:
+  dir: data                 # 시세·토큰 캐시 저장 위치 (gitignore 대상)
+  backfill_days: 20         # 감시 종목마다 최근 N 평일 중 비어 있는 날을 채운다
+
+collect:
+  domestic:
+    candidates: 30          # 거래대금 순위 상위 N개 (순위 API는 최대 30개)
+    extra_symbols: []       # 항상 수집할 종목코드, 예: ["005930"]
+  us:
+    # 해외 거래대금 순위 API가 0건만 돌려줘서 직접 고른 목록을 쓴다 (true로 바꾸면 순위 조회 시도)
+    use_ranking: false
+    # "거래소:티커". 거래소가 틀리면 분봉이 0건으로 온다 (NAS=나스닥, NYS=뉴욕, AMS=아멕스)
+    # 초기 목록 — 거래가 많은 보통주 위주. 가격 조건($5~$100)은 3단계 유니버스에서 다시 거른다.
+    symbols:
+      - NAS:INTC
+      - NAS:CSCO
+      - NAS:SOFI
+      - NAS:AAL
+      - NAS:RIVN
+      - NYS:F
+      - NYS:T
+      - NYS:PFE
+      - NYS:BAC
+      - NYS:WFC
+      - NYS:KO
+      - NYS:CCL
+      - NYS:SNAP
+      - NYS:UBER
+    exchanges: [NAS, NYS, AMS]  # use_ranking: true일 때만 사용
+    candidates: 40          # use_ranking: true일 때 거래소 합산 거래대금 상위 N개
+    extra_symbols: []       # 순위 결과에 항상 더할 종목, 예: ["NAS:AAPL"]
