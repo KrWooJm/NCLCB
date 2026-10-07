@@ -185,12 +185,55 @@ class NotifyConfig(_Strict):
     telegram_enabled: bool
 
 
+class KisConfig(_Strict):
+    requests_per_second: float = Field(gt=0, le=20)
+    max_retries: int = Field(ge=0)
+    timeout_seconds: float = Field(gt=0)
+
+
+class DataConfig(_Strict):
+    dir: str
+    backfill_days: int = Field(ge=0)
+
+
+class DomesticCollectConfig(_Strict):
+    candidates: int = Field(gt=0, le=30)
+    extra_symbols: list[str]
+
+
+class UsCollectConfig(_Strict):
+    exchanges: list[Literal["NAS", "NYS", "AMS"]] = Field(min_length=1)
+    candidates: int = Field(gt=0)
+    extra_symbols: list[str]
+
+    @field_validator("extra_symbols")
+    @classmethod
+    def _has_exchange(cls, v: list[str]) -> list[str]:
+        for s in v:
+            if ":" not in s:
+                raise ValueError(f"미국 종목은 '거래소:티커' 형식이어야 합니다: {s}")
+        return v
+
+
+class CollectConfig(_Strict):
+    domestic: DomesticCollectConfig
+    us: UsCollectConfig
+
+
 class AppConfig(_Strict):
     # "live"는 스키마상 허용하되 factory에서 거부한다 (명시적 오류 메시지를 위해)
     executor: Literal["notify", "paper", "live"]
     markets_enabled: list[Literal["domestic", "us"]]
     log: LogConfig
     notify: NotifyConfig
+    kis: KisConfig
+    data: DataConfig
+    collect: CollectConfig
+
+    @property
+    def data_dir(self) -> Path:
+        p = Path(self.data.dir)
+        return p if p.is_absolute() else PROJECT_ROOT / p
 
 
 # ---------------------------------------------------------------- .env
@@ -201,10 +244,13 @@ class Secrets(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kis_app_key: SecretStr | None = None
-    kis_app_secret: SecretStr | None = None
-    kis_account_no_domestic: SecretStr | None = None
-    kis_account_no_overseas: SecretStr | None = None
+    # 실전 앱키 — 시세 조회 전용. 주문 경로에서는 절대 쓰지 않는다.
+    kis_quote_app_key: SecretStr | None = None
+    kis_quote_app_secret: SecretStr | None = None
+    # 모의투자 앱키·계좌 — 6단계 PaperExecutor에서 사용
+    kis_paper_app_key: SecretStr | None = None
+    kis_paper_app_secret: SecretStr | None = None
+    kis_paper_account_no: SecretStr | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: SecretStr | None = None
 

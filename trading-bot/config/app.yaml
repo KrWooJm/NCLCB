@@ -13,3 +13,23 @@ log:
 
 notify:
   telegram_enabled: false   # 5단계(NotifyExecutor)에서 활성화
+
+kis:
+  # 시세 조회는 실전 서버 + 실전 앱키(조회 전용). 이 클라이언트는 시세·순위 경로 외 호출을 거부한다.
+  # 주문은 6단계에서 모의 서버 + 모의 앱키로만 한다.
+  requests_per_second: 10   # 실전 서버 한도(초당 20건)보다 낮게
+  max_retries: 3
+  timeout_seconds: 10
+
+data:
+  dir: data                 # 시세·토큰 캐시 저장 위치 (gitignore 대상)
+  backfill_days: 20         # 감시 종목마다 최근 N 평일 중 비어 있는 날을 채운다
+
+collect:
+  domestic:
+    candidates: 30          # 거래대금 순위 상위 N개 (순위 API는 최대 30개)
+    extra_symbols: []       # 항상 수집할 종목코드, 예: ["005930"]
+  us:
+    exchanges: [NAS, NYS, AMS]
+    candidates: 40          # 거래소 합산 거래대금 상위 N개 (3단계 갭 필터 전 후보)
+    extra_symbols: []       # "거래소:티커", 예: ["NAS:AAPL"]

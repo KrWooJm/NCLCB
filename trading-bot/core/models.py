@@ -70,3 +70,24 @@ class Signal:
             raise ValueError(f"qty는 양수여야 합니다: {self.qty}")
         if self.order_type is OrderType.LIMIT and self.price is None:
             raise ValueError("지정가 신호에는 price가 필요합니다")
+
+
+@dataclass(frozen=True)
+class WatchItem:
+    """수집·감시 대상 종목. 미국 종목의 symbol은 '거래소:티커' (예: NAS:AAPL)."""
+
+    symbol: str
+    name: str
+    price: float
+    turnover: float  # 거래대금 (해당 시장 통화)
+
+
+CANDLE_COLUMNS = ["open", "high", "low", "close", "volume"]
+
+
+def split_us_symbol(symbol: str) -> tuple[str, str]:
+    """'NAS:AAPL' → ('NAS', 'AAPL')."""
+    excd, sep, ticker = symbol.partition(":")
+    if not sep or not excd or not ticker:
+        raise ValueError(f"미국 종목은 '거래소:티커' 형식이어야 합니다: {symbol}")
+    return excd, ticker

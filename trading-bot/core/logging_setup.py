@@ -75,3 +75,6 @@ def setup_logging(cfg: LogConfig, secrets: Iterable[str] = (), *, log_dir: Path 
         h.setFormatter(formatter)
         h.addFilter(mask)
         root.addHandler(h)
+    # httpx는 요청마다 INFO 로그를 남겨 수집 로그를 덮어 버린다
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

@@ -77,10 +77,25 @@ def test_app_yaml_defaults_to_notify():
 
 
 def test_secrets_are_not_exposed_in_repr(tmp_path, monkeypatch):
-    monkeypatch.delenv("KIS_APP_KEY", raising=False)
+    monkeypatch.delenv("KIS_QUOTE_APP_KEY", raising=False)
     env = tmp_path / ".env"
-    env.write_text("KIS_APP_KEY=super-secret-key-123\n", encoding="utf-8")
+    env.write_text("KIS_QUOTE_APP_KEY=super-secret-key-123\n", encoding="utf-8")
     secrets = load_secrets(env)
-    assert secrets.kis_app_key.get_secret_value() == "super-secret-key-123"
+    assert secrets.kis_quote_app_key.get_secret_value() == "super-secret-key-123"
     assert "super-secret-key-123" not in repr(secrets)
     assert secrets.values() == ["super-secret-key-123"]
+
+
+def test_app_yaml_collect_settings():
+    app = load_app_config()
+    assert app.collect.domestic.candidates <= 30
+    assert set(app.collect.us.exchanges) <= {"NAS", "NYS", "AMS"}
+    assert app.data_dir.is_absolute()
+
+
+def test_us_extra_symbols_need_exchange(app_dict, write_yaml):
+    from core.config import load_app_config as load
+
+    app_dict["collect"]["us"]["extra_symbols"] = ["AAPL"]
+    with pytest.raises(ValidationError, match="거래소:티커"):
+        load(write_yaml(app_dict))
