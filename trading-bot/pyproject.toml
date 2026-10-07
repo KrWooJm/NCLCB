@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.5",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
+    "tzdata",  # Windows에는 시간대 DB가 없어 zoneinfo가 이 패키지를 쓴다
 ]
 
 [project.optional-dependencies]
