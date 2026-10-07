@@ -110,23 +110,35 @@ class KisOverseasBroker:
     # ------------------------------------------------------------ ranking
 
     def rank_by_turnover(self, universe: UniverseConfig, exchanges: list[str], size: int) -> list[WatchItem]:
-        """거래소별 당일 거래대금 순위를 합쳐 상위 size개. ETF·ADR 구분은 3단계 유니버스에서 거른다."""
+        """거래소별 거래대금 순위를 합쳐 상위 size개. ETF·ADR 구분은 3단계 유니버스에서 거른다.
+
+        '당일' 순위는 미국 장 시작 전(한국 낮 시간)에는 비어 있을 수 있어, 비면 조건을 풀어 가며 다시 묻는다:
+        당일+가격필터 → 당일(필터 없음) → 최근 2일(필터 없음). 가격 필터는 받은 뒤 코드에서 다시 적용한다.
+        """
+        attempts = [
+            ("당일, 가격필터", "0", f"{universe.min_price:g}", f"{universe.max_price:g}"),
+            ("당일", "0", "", ""),
+            ("최근 2일", "1", "", ""),
+        ]
         seen: dict[str, WatchItem] = {}
         for excd in exchanges:
-            res = self._q.get(
-                RANK_PATH,
-                RANK_TR,
-                {
-                    "EXCD": excd,
-                    "NDAY": "0",  # 당일
-                    "VOL_RANG": "0",
-                    "AUTH": "",
-                    "KEYB": "",
-                    "PRC1": f"{universe.min_price:g}",  # 5.0 → "5"
-                    "PRC2": f"{universe.max_price:g}",
-                },
-            )
-            rows = res.body.get("output2") or []
+            rows: list[dict] = []
+            for label, nday, prc1, prc2 in attempts:
+                res = self._q.get(
+                    RANK_PATH,
+                    RANK_TR,
+                    {"EXCD": excd, "NDAY": nday, "VOL_RANG": "0", "AUTH": "", "KEYB": "", "PRC1": prc1, "PRC2": prc2},
+                )
+                rows = res.body.get("output2") or []
+                if rows:
+                    break
+                logger.warning(
+                    "%s 거래대금 순위(%s)가 비었습니다: msg=%s output1=%s",
+                    excd,
+                    label,
+                    str(res.body.get("msg1", "")).strip(),
+                    res.body.get("output1"),
+                )
             kept = 0
             for r in rows:
                 ticker = (r.get("symb") or "").strip()
@@ -137,15 +149,7 @@ class KisOverseasBroker:
                 seen.setdefault(item.symbol, item)
                 kept += 1
             if rows:
-                logger.info("%s 거래대금 순위: 응답 %d행, 가격 필터 후 %d개", excd, len(rows), kept)
-            else:
-                # 장 시작 전·휴장 등으로 '당일' 순위가 비어 있을 수 있다 — 원인 파악용으로 응답 요약을 남긴다
-                logger.warning(
-                    "%s 거래대금 순위가 비었습니다: msg=%s output1=%s",
-                    excd,
-                    str(res.body.get("msg1", "")).strip(),
-                    res.body.get("output1"),
-                )
+                logger.info("%s 거래대금 순위(%s): 응답 %d행, 가격 필터 후 %d개", excd, label, len(rows), kept)
         items = sorted(seen.values(), key=lambda w: w.turnover if w.turnover == w.turnover else -1, reverse=True)
         return items[:size]
 

@@ -17,7 +17,7 @@ notify:
 kis:
   # 시세 조회는 실전 서버 + 실전 앱키(조회 전용). 이 클라이언트는 시세·순위 경로 외 호출을 거부한다.
   # 주문은 6단계에서 모의 서버 + 모의 앱키로만 한다.
-  requests_per_second: 10   # 실전 서버 한도(초당 20건)보다 낮게
+  requests_per_second: 3    # 초과 시 EGW00201. 신규 앱키는 한도가 낮을 수 있어 보수적으로 시작, 안정되면 올린다
   max_retries: 3
   timeout_seconds: 10
 

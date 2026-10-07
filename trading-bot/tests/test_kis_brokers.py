@@ -234,6 +234,24 @@ def test_overseas_rank_sends_integer_prices_and_warns_when_empty(tmp_path, caplo
     fake.route(kis_overseas.RANK_PATH, lambda r: ok({"output1": {"stat": "", "crec": "0"}, "output2": []}))
     items = KisOverseasBroker(make_client(fake, tmp_path), today=date(2026, 10, 6)).rank_by_turnover(US.universe, ["NAS"], 10)
     assert items == []
-    p = fake.api_calls(kis_overseas.RANK_PATH)[0].url.params
-    assert (p["PRC1"], p["PRC2"]) == ("5", "100")
-    assert "NAS 거래대금 순위가 비었습니다" in caplog.text
+    calls = fake.api_calls(kis_overseas.RANK_PATH)
+    assert [(c.url.params["NDAY"], c.url.params["PRC1"], c.url.params["PRC2"]) for c in calls] == [
+        ("0", "5", "100"),
+        ("0", "", ""),
+        ("1", "", ""),
+    ]
+    assert "NAS 거래대금 순위(최근 2일)가 비었습니다" in caplog.text
+
+
+def test_overseas_rank_falls_back_and_filters_price_locally(tmp_path):
+    def handler(r):
+        if r.url.params["NDAY"] == "1":  # 장 시작 전: 당일은 비고 최근 2일만 있음
+            rows = [{"symb": "AAPL", "name": "Apple", "last": "50", "tamt": "900"}, {"symb": "BIG", "name": "", "last": "500", "tamt": "999"}]
+        else:
+            rows = []
+        return ok({"output1": {"crec": str(len(rows))}, "output2": rows})
+
+    fake = FakeKis()
+    fake.route(kis_overseas.RANK_PATH, handler)
+    items = KisOverseasBroker(make_client(fake, tmp_path), today=date(2026, 10, 6)).rank_by_turnover(US.universe, ["NAS"], 10)
+    assert [w.symbol for w in items] == ["NAS:AAPL"]  # $500 종목은 코드에서 걸러짐

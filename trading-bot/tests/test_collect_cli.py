@@ -44,6 +44,7 @@ def setup_cli(tmp_path, monkeypatch, rank_rows):
         update={
             "data": app.data.model_copy(update={"dir": str(tmp_path / "data"), "backfill_days": 0}),
             "log": app.log.model_copy(update={"dir": str(tmp_path / "logs")}),
+            "kis": app.kis.model_copy(update={"requests_per_second": 20}),
         }
     )
     monkeypatch.setattr(cli, "load_app_config", lambda: app)
