@@ -122,17 +122,30 @@ class KisOverseasBroker:
                     "VOL_RANG": "0",
                     "AUTH": "",
                     "KEYB": "",
-                    "PRC1": str(universe.min_price),
-                    "PRC2": str(universe.max_price),
+                    "PRC1": f"{universe.min_price:g}",  # 5.0 → "5"
+                    "PRC2": f"{universe.max_price:g}",
                 },
             )
-            for r in res.body.get("output2") or []:
+            rows = res.body.get("output2") or []
+            kept = 0
+            for r in rows:
                 ticker = (r.get("symb") or "").strip()
                 price = to_float(r.get("last"))
                 if not ticker or not (universe.min_price <= price <= universe.max_price):
                     continue
                 item = WatchItem(f"{excd}:{ticker}", (r.get("name") or r.get("ename") or "").strip(), price, to_float(r.get("tamt")))
                 seen.setdefault(item.symbol, item)
+                kept += 1
+            if rows:
+                logger.info("%s 거래대금 순위: 응답 %d행, 가격 필터 후 %d개", excd, len(rows), kept)
+            else:
+                # 장 시작 전·휴장 등으로 '당일' 순위가 비어 있을 수 있다 — 원인 파악용으로 응답 요약을 남긴다
+                logger.warning(
+                    "%s 거래대금 순위가 비었습니다: msg=%s output1=%s",
+                    excd,
+                    str(res.body.get("msg1", "")).strip(),
+                    res.body.get("output1"),
+                )
         items = sorted(seen.values(), key=lambda w: w.turnover if w.turnover == w.turnover else -1, reverse=True)
         return items[:size]
 

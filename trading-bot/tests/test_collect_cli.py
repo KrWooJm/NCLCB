@@ -24,14 +24,14 @@ def load_cli():
     return mod
 
 
-def test_collect_cli_end_to_end(tmp_path, monkeypatch):
-    day = date(2026, 10, 6)
+RANK_ROW = {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "lstn_stcn": "5969782550", "acml_tr_pbmn": "900000000000"}
+DAY = date(2026, 10, 6)
+
+
+def setup_cli(tmp_path, monkeypatch, rank_rows):
     fake = FakeKis()
-    fake.route(
-        kis_domestic.RANK_PATH,
-        lambda r: ok({"output": [{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000", "lstn_stcn": "5969782550", "acml_tr_pbmn": "900000000000"}]}),
-    )
-    fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({day: krx_minutes(day)}))
+    fake.route(kis_domestic.RANK_PATH, lambda r: ok({"output": rank_rows}))
+    fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({DAY: krx_minutes(DAY)}))
 
     real_client = httpx.Client
     monkeypatch.setattr(kis_client.httpx, "Client", lambda **kw: real_client(base_url="https://kis.test", transport=httpx.MockTransport(fake)))
@@ -48,6 +48,12 @@ def test_collect_cli_end_to_end(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(cli, "load_app_config", lambda: app)
     monkeypatch.setattr(cli, "setup_logging", lambda *a, **k: None)
+    return cli, fake
+
+
+def test_collect_cli_end_to_end(tmp_path, monkeypatch):
+    day = DAY
+    cli, fake = setup_cli(tmp_path, monkeypatch, [RANK_ROW])
 
     assert cli.main(["--market", "domestic", "--date", "2026-10-06"]) == 0
 
@@ -58,3 +64,26 @@ def test_collect_cli_end_to_end(tmp_path, monkeypatch):
     assert (tmp_path / "data" / ".kis_token_quote.json").exists()
     # 조회 전용 클라이언트는 시세·순위 경로만 호출했다
     assert all("/quotations/" in c.url.path or c.url.path == "/oauth2/tokenP" for c in fake.calls)
+
+
+def test_collect_cli_symbols_option_skips_ranking(tmp_path, monkeypatch):
+    cli, fake = setup_cli(tmp_path, monkeypatch, [])
+    assert cli.main(["--market", "domestic", "--date", "2026-10-06", "--symbols", "000660", "--no-backfill"]) == 0
+    assert not fake.api_calls(kis_domestic.RANK_PATH)
+    assert len(CandleStore(tmp_path / "data").read(Market.DOMESTIC, "000660", DAY, DAY)) == 381
+    assert not (tmp_path / "data" / "watchlists" / "domestic" / "2026-10-06.json").exists()
+
+
+def test_collect_cli_falls_back_to_saved_watchlist_when_ranking_empty(tmp_path, monkeypatch):
+    from core.data.watchlist import save_watchlist
+    from core.models import WatchItem
+
+    cli, _ = setup_cli(tmp_path, monkeypatch, [])
+    save_watchlist(tmp_path / "data", Market.DOMESTIC, date(2026, 10, 5), [WatchItem("035420", "NAVER", 1, 1)])
+    assert cli.main(["--market", "domestic", "--date", "2026-10-06", "--no-backfill"]) == 0
+    assert len(CandleStore(tmp_path / "data").read(Market.DOMESTIC, "035420", DAY, DAY)) == 381
+
+
+def test_collect_cli_empty_ranking_without_saved_watchlist_fails(tmp_path, monkeypatch):
+    cli, _ = setup_cli(tmp_path, monkeypatch, [])
+    assert cli.main(["--market", "domestic", "--date", "2026-10-06", "--no-backfill"]) == 1

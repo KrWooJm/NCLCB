@@ -209,3 +209,13 @@ def test_overseas_rank_merges_exchanges(tmp_path):
     )
     items = KisOverseasBroker(make_client(fake, tmp_path), today=date(2026, 10, 6)).rank_by_turnover(US.universe, ["NAS", "NYS"], 10)
     assert [w.symbol for w in items] == ["NAS:AAPL", "NYS:F", "NYS:AAPL"]
+
+
+def test_overseas_rank_sends_integer_prices_and_warns_when_empty(tmp_path, caplog):
+    fake = FakeKis()
+    fake.route(kis_overseas.RANK_PATH, lambda r: ok({"output1": {"stat": "", "crec": "0"}, "output2": []}))
+    items = KisOverseasBroker(make_client(fake, tmp_path), today=date(2026, 10, 6)).rank_by_turnover(US.universe, ["NAS"], 10)
+    assert items == []
+    p = fake.api_calls(kis_overseas.RANK_PATH)[0].url.params
+    assert (p["PRC1"], p["PRC2"]) == ("5", "100")
+    assert "NAS 거래대금 순위가 비었습니다" in caplog.text

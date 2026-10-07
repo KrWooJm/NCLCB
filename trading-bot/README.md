@@ -88,7 +88,10 @@ python scripts/collect.py --market us --dry-run --limit 2 --no-backfill
 python scripts/collect.py --market domestic
 python scripts/collect.py --market us
 python scripts/collect.py --market domestic --date 2026-10-06   # 특정 거래일
+python scripts/collect.py --market us --symbols NAS:AAPL,NYS:F    # 순위 조회 없이 지정 종목만
 ```
+
+순위 결과가 비면(장 시작 전 등) 가장 최근에 저장된 감시목록을 대신 씁니다.
 
 | 항목 | 내용 |
 |---|---|

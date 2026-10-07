@@ -23,9 +23,9 @@ from core.broker.kis_overseas import KisOverseasBroker  # noqa: E402
 from core.config import load_app_config, load_secrets, load_strategy  # noqa: E402
 from core.data.collector import collect  # noqa: E402
 from core.data.store import CandleStore  # noqa: E402
-from core.data.watchlist import merge_extra, save_watchlist  # noqa: E402
+from core.data.watchlist import latest_watchlist, merge_extra, save_watchlist  # noqa: E402
 from core.logging_setup import setup_logging  # noqa: E402
-from core.models import Market  # noqa: E402
+from core.models import Market, WatchItem  # noqa: E402
 from core.timeutil import last_completed_session  # noqa: E402
 
 logger = logging.getLogger("collect")
@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="조회만 하고 저장하지 않음")
     ap.add_argument("--limit", type=int, help="감시목록 앞에서 N개만 (연결 확인용)")
     ap.add_argument("--no-backfill", action="store_true", help="과거 빈 날 채우기 생략")
+    ap.add_argument("--symbols", help="순위 조회 대신 이 종목만 수집 (쉼표 구분, 미국은 거래소:티커. 예: NAS:AAPL,NYS:F)")
     args = ap.parse_args(argv)
 
     app, strategy, secrets = load_app_config(), load_strategy(), load_secrets()
@@ -67,12 +68,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if market is Market.DOMESTIC:
         broker = KisDomesticBroker(client, mcfg.session)
-        items = broker.rank_by_turnover(mcfg.universe, app.collect.domestic.candidates)
-        items = merge_extra(items, app.collect.domestic.extra_symbols)
+        extra = app.collect.domestic.extra_symbols
     else:
         broker = KisOverseasBroker(client)
+        extra = app.collect.us.extra_symbols
+
+    from_ranking = not args.symbols
+    if args.symbols:
+        items = [WatchItem(s.strip(), "", float("nan"), float("nan")) for s in args.symbols.split(",") if s.strip()]
+    elif market is Market.DOMESTIC:
+        items = broker.rank_by_turnover(mcfg.universe, app.collect.domestic.candidates)
+    else:
         items = broker.rank_by_turnover(mcfg.universe, app.collect.us.exchanges, app.collect.us.candidates)
-        items = merge_extra(items, app.collect.us.extra_symbols)
+
+    if from_ranking and not items:
+        prev = latest_watchlist(root, market, day)
+        if prev:
+            logger.warning("순위 결과가 비어 %s에 저장된 감시목록 %d종목을 대신 씁니다", prev[0], len(prev[1]))
+            items, from_ranking = prev[1], False
+        else:
+            logger.warning(
+                "순위 결과가 비었고 저장된 감시목록도 없습니다. 장 마감 직후(국내 15:45, 미국 한국시각 06:15)에 "
+                "다시 실행하거나 --symbols 로 종목을 지정하세요"
+            )
+    items = merge_extra(items, extra)
 
     if args.limit:
         items = items[: args.limit]
@@ -80,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     if not items:
         logger.error("감시목록이 비었습니다")
         return 1
-    if not args.dry_run:
+    if not args.dry_run and from_ranking:
         save_watchlist(root, market, day, items)
 
     summary = collect(
