@@ -77,6 +77,8 @@ cp .env.example .env               # 그다음 .env에 값 입력
 ## 분봉 수집 (2단계)
 
 장 마감 후 실행하면 그날의 거래대금 상위 종목을 감시목록으로 뽑고, 각 종목의 1분봉을 저장합니다.
+국내는 KRX+NXT **통합 시세로 08:00~20:00**(NXT 프리·애프터마켓 포함)을 받습니다.
+전략은 메인 시간 09:00~15:20 기준이라 1차 익절 전 단타 청산은 15:05입니다 (`config/strategy.yaml`의 `session` / `data_session`).
 처음 실행할 때는 종목마다 최근 `backfill_days`(기본 20) 평일 중 비어 있는 날도 함께 채웁니다.
 
 ```bash
@@ -96,6 +98,7 @@ python scripts/collect.py --market us --symbols NAS:AAPL,NYS:F    # 순위 조�
 | 항목 | 내용 |
 |---|---|
 | 감시목록 | 국내: 거래대금 순위(최대 30) → 가격·시가총액·거래대금 필터 (관리·경고·우선주·정지·ETF·ETN·스팩 제외) / 미국: NAS·NYS·AMS 거래대금 순위 합산 상위 40, 가격 $5~$100. ETF·ADR 구분은 3단계에서 거름 |
+| 국내 범위 | 08:00~20:00 통합(KRX+NXT). NXT에서 거래되지 않는 종목은 09:00~15:30 봉만 있습니다 |
 | 저장 위치 | `data/candles/{domestic,us}/1m/{종목}/{YYYY-MM-DD}.parquet` (시각은 시간대 포함) |
 | 감시목록 기록 | `data/watchlists/{market}/{YYYY-MM-DD}.json` |
 | 빈 날 | 휴장·거래정지·제공 범위 밖이면 `.empty` 표시 파일을 남겨 다시 조회하지 않음 |
@@ -109,8 +112,8 @@ python scripts/collect.py --market us --symbols NAS:AAPL,NYS:F    # 순위 조�
 PC가 켜져 있어야 합니다. 경로는 본인 환경에 맞게 바꾸세요.
 
 ```bat
-:: 국내 — 평일 15:45 (KST)
-schtasks /Create /TN "trading-bot 국내 분봉" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 15:45 ^
+:: 국내 — 평일 20:10 (KST, NXT 애프터마켓 20:00 마감 후)
+schtasks /Create /TN "trading-bot 국내 분봉" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 20:10 ^
   /TR "\"C:\trading-bot\.venv\Scripts\python.exe\" \"C:\trading-bot\scripts\collect.py\" --market domestic"
 
 :: 미국 — 화~토 06:15 (KST). 뉴욕 16:00 마감은 서머타임 05:00 / 표준시 06:00 KST
@@ -125,7 +128,8 @@ schtasks /Create /TN "trading-bot 미국 분봉" /SC WEEKLY /D TUE,WED,THU,FRI,S
 
 API 문서만으로 확정할 수 없어 실제 응답으로 확인해야 하는 항목입니다. 다르면 알려 주세요.
 
-1. 국내 분봉의 첫 시각이 `09:00`인지 (봉 시각 = 1분 구간의 시작이라는 가정)
+1. 국내 분봉 시각: NXT 거래 종목(예: 005930)은 `08:00`부터 `20:00`까지, KRX 전용 종목은 `09:00`부터인지
+   (봉 시각 = 1분 구간의 시작이라는 가정, 통합 시세 `UN` 코드가 분봉·순위 조회에서 동작한다는 가정)
 2. 미국 종목 하루치가 약 390개로 끊김 없이 받아지는지 (페이지 넘김 키를 현지 시각으로 보낸다는 가정)
 3. 미국 분봉이 과거 며칠까지 제공되는지 — 제공 범위 밖의 날은 `.empty`로 표시됩니다
 4. 장 마감 후 순위 API가 당일 기준 결과를 주는지

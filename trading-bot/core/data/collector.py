@@ -47,6 +47,7 @@ def collect(
     watchlist: list[WatchItem],
     source: MinuteSource,
     store: CandleStore,
+    data_session: SessionConfig,
     session: SessionConfig,
     *,
     backfill_days: int,
@@ -68,7 +69,7 @@ def collect(
 
         for d in days:
             raw = fetched.get(d)
-            df, issues = clean_minutes(raw, d, session) if raw is not None else (None, [])
+            df, issues = clean_minutes(raw, d, data_session, session) if raw is not None else (None, [])
             for msg in issues:
                 logger.warning("%s %s: %s", sym, d, msg)
             summary.warnings += len(issues)

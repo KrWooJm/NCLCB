@@ -75,11 +75,20 @@ class MarketConfig(_Strict):
     timezone: str
     currency: str
     capital: float = Field(gt=0)
-    session: SessionConfig
+    session: SessionConfig  # 전략 기준 시간 (시가 범위 시작, 장 마감 청산 기준)
+    data_session: SessionConfig  # 분봉 수집 범위 (session을 포함해야 함)
     entry_window: TimeWindow
     max_price_vs_limit_up: Ratio | None = Field(gt=0, le=1)
     universe: UniverseConfig
     costs: CostConfig
+
+    @model_validator(mode="after")
+    def _sessions_nested(self) -> MarketConfig:
+        if not (self.data_session.open <= self.session.open and self.session.close <= self.data_session.close):
+            raise ValueError("data_session은 session을 포함해야 합니다")
+        if not (self.session.open <= self.entry_window.start and self.entry_window.end <= self.session.close):
+            raise ValueError("entry_window는 session 안에 있어야 합니다")
+        return self
 
     @field_validator("timezone")
     @classmethod

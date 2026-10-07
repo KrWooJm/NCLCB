@@ -22,17 +22,20 @@ MINUTE_TR = "FHKST03010230"
 RANK_PATH = "/uapi/domestic-stock/v1/quotations/volume-rank"
 RANK_TR = "FHPST01710000"
 
+# 시장 구분: UN = KRX + NXT 통합 (NXT 프리·애프터마켓 08:00~20:00 포함)
+MARKET_CODE = "UN"
+
 # 순위 조회 대상 제외 (10자리, 순서: 투자위험/경고/주의, 관리종목, 정리매매, 불성실공시,
 # 우선주, 거래정지, ETF, ETN, 신용주문불가, SPAC)
 RANK_EXCLUDE = "1111111101"
 
 
 class KisDomesticBroker:
-    def __init__(self, quote: KisClient, session: SessionConfig, *, max_pages_per_day: int = 8) -> None:
+    def __init__(self, quote: KisClient, data_session: SessionConfig, *, max_pages_per_day: int = 12) -> None:
         if not quote.quote_only:
             raise ValueError("시세 조회에는 조회 전용(quote_only) 클라이언트를 넘겨야 합니다")
         self._q = quote
-        self._session = session
+        self._session = data_session  # 08:00~20:00 = 720분 / 120건 = 6페이지 + 여유
         self._max_pages = max_pages_per_day
 
     # ------------------------------------------------------------ candles
@@ -43,14 +46,14 @@ class KisDomesticBroker:
     def _fetch_day(self, symbol: str, day: date) -> pd.DataFrame:
         ds = day.strftime("%Y%m%d")
         open_hms = self._session.open.strftime("%H%M%S")
-        hour = "160000"  # 장 마감 이후 시각부터 거슬러 올라간다
+        hour = self._session.close.strftime("%H%M%S")  # 수집 범위 끝에서부터 거슬러 올라간다
         bars: dict[datetime, tuple] = {}
         for _ in range(self._max_pages):
             res = self._q.get(
                 MINUTE_PATH,
                 MINUTE_TR,
                 {
-                    "FID_COND_MRKT_DIV_CODE": "J",  # KRX 정규장
+                    "FID_COND_MRKT_DIV_CODE": MARKET_CODE,
                     "FID_INPUT_ISCD": symbol,
                     "FID_INPUT_HOUR_1": hour,
                     "FID_INPUT_DATE_1": ds,
@@ -100,7 +103,7 @@ class KisDomesticBroker:
             RANK_PATH,
             RANK_TR,
             {
-                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_MRKT_DIV_CODE": MARKET_CODE,
                 "FID_COND_SCR_DIV_CODE": "20171",
                 "FID_INPUT_ISCD": "0000",
                 "FID_DIV_CLS_CODE": "1",  # 보통주

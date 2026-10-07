@@ -63,10 +63,10 @@ def test_store_empty_marker_and_overwrite(tmp_path):
 
 def test_clean_minutes_drops_duplicates_and_out_of_session():
     day = date(2026, 10, 6)
-    df = pd.concat([bars(day, time(8, 58), 400, KST), bars(day, time(9, 0), 1, KST)])
-    clean, issues = clean_minutes(df, day, KR.session)
-    assert clean.index.min().time() == time(9, 0)
-    assert clean.index.max().time() <= time(15, 30)
+    df = pd.concat([bars(day, time(7, 58), 740, KST), bars(day, time(9, 0), 1, KST)])  # 07:58~20:17
+    clean, issues = clean_minutes(df, day, KR.data_session, KR.session)
+    assert clean.index.min().time() == time(8, 0)
+    assert clean.index.max().time() == time(20, 0)
     assert clean.index.is_unique
     assert any("중복" in m for m in issues) and any("밖" in m for m in issues)
 
@@ -75,9 +75,21 @@ def test_clean_minutes_flags_bad_ohlc_and_partial_day():
     day = date(2026, 10, 6)
     df = bars(day, time(9, 0), 10, KST)
     df.iloc[3, df.columns.get_loc("high")] = 1.0
-    _, issues = clean_minutes(df, day, KR.session)
+    _, issues = clean_minutes(df, day, KR.data_session, KR.session)
     assert any("OHLC" in m for m in issues)
     assert any("절반 미만" in m for m in issues)
+
+
+def test_clean_minutes_krx_only_stock_is_not_partial():
+    # NXT에서 거래되지 않는 종목: 09:00~15:30 봉만 있어도 정상
+    day = date(2026, 10, 6)
+    _, issues = clean_minutes(bars(day, time(9, 0), 391, KST), day, KR.data_session, KR.session)
+    assert issues == []
+
+
+def test_domestic_strategy_close_gives_1505_flatten():
+    close = datetime.combine(date(2026, 10, 6), KR.session.close)
+    assert (close - timedelta(minutes=STRATEGY.exit.flatten_before_close_minutes)).time() == time(15, 5)
 
 
 # ---------------------------------------------------------------- resample
@@ -111,14 +123,14 @@ def test_resample_handles_multiple_days():
 @pytest.mark.parametrize(
     "now, expected",
     [
-        (datetime(2026, 10, 7, 15, 0, tzinfo=KST), date(2026, 10, 6)),  # 수 장중 → 화
-        (datetime(2026, 10, 7, 15, 40, tzinfo=KST), date(2026, 10, 7)),  # 수 마감 후
+        (datetime(2026, 10, 7, 15, 40, tzinfo=KST), date(2026, 10, 6)),  # 수 NXT 애프터마켓 중 → 화
+        (datetime(2026, 10, 7, 20, 10, tzinfo=KST), date(2026, 10, 7)),  # 수 20:00 마감 후
         (datetime(2026, 10, 10, 12, 0, tzinfo=KST), date(2026, 10, 9)),  # 토 → 금
         (datetime(2026, 10, 12, 8, 0, tzinfo=KST), date(2026, 10, 9)),  # 월 장전 → 금
     ],
 )
 def test_last_completed_session_domestic(now, expected):
-    assert last_completed_session(now, KST, KR.session.close, timedelta(minutes=5)) == expected
+    assert last_completed_session(now, KST, KR.data_session.close, timedelta(minutes=5)) == expected
 
 
 def test_last_completed_session_us_from_korean_morning():
@@ -168,7 +180,7 @@ def test_collect_saves_target_and_backfills_only_missing(tmp_path):
     store.write(Market.DOMESTIC, "A", history[0], full_day(history[0]))  # 이미 있음
     src = FakeSource({("A", d): full_day(d) for d in history + [target]})
 
-    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.session, backfill_days=3)
+    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.data_session, KR.session, backfill_days=3)
 
     assert src.requests == [("A", history[1:] + [target])]
     assert s.days_saved == 3 and s.days_empty == 0 and not s.failed
@@ -180,8 +192,8 @@ def test_collect_marks_empty_days_and_does_not_refetch_them(tmp_path):
     store = CandleStore(tmp_path)
     target = date(2026, 10, 7)
     src = FakeSource({("A", target): full_day(target)})  # 10/6은 휴장이라고 가정
-    collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.session, backfill_days=1)
-    collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.session, backfill_days=1)
+    collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.data_session, KR.session, backfill_days=1)
+    collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, store, KR.data_session, KR.session, backfill_days=1)
     assert src.requests[1] == ("A", [target])  # 표시된 빈 날은 다시 묻지 않는다
 
 
@@ -189,13 +201,13 @@ def test_collect_continues_after_symbol_failure(tmp_path):
     store = CandleStore(tmp_path)
     target = date(2026, 10, 7)
     src = FakeSource({("B", target): full_day(target)}, fail={"A"})
-    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1), WatchItem("B", "", 1, 1)], src, store, KR.session, backfill_days=0)
+    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1), WatchItem("B", "", 1, 1)], src, store, KR.data_session, KR.session, backfill_days=0)
     assert s.failed == ["A"] and s.days_saved == 1
 
 
 def test_collect_dry_run_writes_nothing(tmp_path):
     target = date(2026, 10, 7)
     src = FakeSource({("A", target): full_day(target)})
-    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, CandleStore(tmp_path), KR.session, backfill_days=2, dry_run=True)
+    s = collect(Market.DOMESTIC, target, [WatchItem("A", "", 1, 1)], src, CandleStore(tmp_path), KR.data_session, KR.session, backfill_days=2, dry_run=True)
     assert s.days_saved == 1 and s.days_empty == 2
     assert not any(tmp_path.rglob("*"))

@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
 
     market = Market(args.market)
     mcfg = getattr(strategy.markets, market.value)
-    day = args.date or last_completed_session(datetime.now(mcfg.tz), mcfg.tz, mcfg.session.close, CLOSE_GRACE)
+    day = args.date or last_completed_session(datetime.now(mcfg.tz), mcfg.tz, mcfg.data_session.close, CLOSE_GRACE)
 
     root = app.data_dir
     client = KisClient(
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if market is Market.DOMESTIC:
-        broker = KisDomesticBroker(client, mcfg.session)
+        broker = KisDomesticBroker(client, mcfg.data_session)
         extra = app.collect.domestic.extra_symbols
     else:
         broker = KisOverseasBroker(client)
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             items, from_ranking = prev[1], False
         else:
             logger.warning(
-                "순위 결과가 비었고 저장된 감시목록도 없습니다. 장 마감 직후(국내 15:45, 미국 한국시각 06:15)에 "
+                "순위 결과가 비었고 저장된 감시목록도 없습니다. 수집 마감 직후(국내 20:10, 미국 한국시각 06:15)에 "
                 "다시 실행하거나 --symbols 로 종목을 지정하세요"
             )
     items = merge_extra(items, extra)
@@ -108,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         items,
         broker,
         CandleStore(root),
+        mcfg.data_session,
         mcfg.session,
         backfill_days=0 if args.no_backfill else app.data.backfill_days,
         dry_run=args.dry_run,

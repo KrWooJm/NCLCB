@@ -14,6 +14,8 @@ def test_strategy_yaml_loads_documented_values():
     assert kr.capital == 1_000_000 and us.capital == 1_000_000
     assert (kr.entry_window.start, kr.entry_window.end) == (time(9, 15), time(11, 0))
     assert (us.entry_window.start, us.entry_window.end) == (time(9, 45), time(11, 30))
+    assert (kr.session.open, kr.session.close) == (time(9, 0), time(15, 20))
+    assert (kr.data_session.open, kr.data_session.close) == (time(8, 0), time(20, 0))
     assert kr.max_price_vs_limit_up == 0.9 and us.max_price_vs_limit_up is None
     assert kr.universe.watchlist_size == 30 and us.universe.watchlist_size == 20
     assert kr.costs.slippage_rate == 0.001 and us.costs.slippage_rate == 0.001
@@ -61,6 +63,8 @@ def test_unknown_field_fails(strategy_dict, write_yaml):
         (("markets", "us"), "timezone", "Mars/Olympus"),
         (("markets", "domestic"), "max_price_vs_limit_up", 1.5),
         (("markets", "domestic", "entry_window"), "end", "09:00"),  # start보다 앞
+        (("markets", "domestic", "data_session"), "close", "15:00"),  # session(15:20)을 포함하지 않음
+        (("markets", "domestic", "entry_window"), "end", "15:30"),  # session 밖
     ],
 )
 def test_invalid_values_fail(strategy_dict, write_yaml, section, key, value):

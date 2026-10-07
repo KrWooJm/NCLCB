@@ -56,7 +56,7 @@ def test_domestic_fetches_full_day_across_pages(tmp_path):
     day = date(2026, 10, 6)
     fake = FakeKis()
     fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({day: krx_minutes(day)}))
-    broker = KisDomesticBroker(make_client(fake, tmp_path), KR.session)
+    broker = KisDomesticBroker(make_client(fake, tmp_path), KR.data_session)
 
     df = broker.fetch_minutes("005930", [day])[day]
 
@@ -66,15 +66,32 @@ def test_domestic_fetches_full_day_across_pages(tmp_path):
     assert df.index[0] == datetime(2026, 10, 6, 9, 0, tzinfo=KST)
     assert df.iloc[0].to_dict() == {"open": 10000, "high": 10200, "low": 9900, "close": 10100, "volume": 150}
     calls = fake.api_calls(kis_domestic.MINUTE_PATH)
-    assert len(calls) == 4  # 120건씩
+    # 120건씩 4페이지 + 08:00까지 더 있는지 확인하는 1회 (NXT 미거래 종목은 09:00 이전 봉이 없다)
+    assert len(calls) == 5
     assert calls[0].headers["tr_id"] == "FHKST03010230"
-    assert calls[0].url.params["FID_COND_MRKT_DIV_CODE"] == "J"
+    assert calls[0].url.params["FID_COND_MRKT_DIV_CODE"] == "UN"  # KRX+NXT 통합
+    assert calls[0].url.params["FID_INPUT_HOUR_1"] == "200000"
+
+
+def test_domestic_fetches_nxt_extended_hours(tmp_path):
+    day = date(2026, 10, 6)
+    t = datetime.combine(day, time(8, 0))
+    nxt = []
+    while t <= datetime.combine(day, time(20, 0)):
+        nxt.append(t)
+        t += timedelta(minutes=1)
+    fake = FakeKis()
+    fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({day: nxt}))
+    df = KisDomesticBroker(make_client(fake, tmp_path), KR.data_session).fetch_minutes("005930", [day])[day]
+    assert len(df) == 721
+    assert df.index[0] == datetime(2026, 10, 6, 8, 0, tzinfo=KST)
+    assert df.index[-1] == datetime(2026, 10, 6, 20, 0, tzinfo=KST)
 
 
 def test_domestic_empty_day_returns_empty_frame(tmp_path):
     fake = FakeKis()
     fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({}))
-    df = KisDomesticBroker(make_client(fake, tmp_path), KR.session).fetch_minutes("005930", [date(2026, 10, 3)])
+    df = KisDomesticBroker(make_client(fake, tmp_path), KR.data_session).fetch_minutes("005930", [date(2026, 10, 3)])
     assert df[date(2026, 10, 3)].empty
     assert len(fake.api_calls(kis_domestic.MINUTE_PATH)) == 1
 
@@ -83,7 +100,7 @@ def test_domestic_get_candles_filters_range(tmp_path):
     day = date(2026, 10, 6)
     fake = FakeKis()
     fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({day: krx_minutes(day)}))
-    broker = KisDomesticBroker(make_client(fake, tmp_path), KR.session)
+    broker = KisDomesticBroker(make_client(fake, tmp_path), KR.data_session)
     df = broker.get_candles("005930", "1m", datetime(2026, 10, 6, 9, 0, tzinfo=KST), datetime(2026, 10, 6, 9, 15, tzinfo=KST))
     assert len(df) == 15
     with pytest.raises(ValueError):
@@ -106,9 +123,10 @@ def test_domestic_rank_applies_universe_filters(tmp_path):
             {"output": [{"mksc_shrn_iscd": c, "hts_kor_isnm": n, "stck_prpr": p, "lstn_stcn": s, "acml_tr_pbmn": t} for c, n, p, s, t in rows]}
         ),
     )
-    items = KisDomesticBroker(make_client(fake, tmp_path), KR.session).rank_by_turnover(KR.universe, 30)
+    items = KisDomesticBroker(make_client(fake, tmp_path), KR.data_session).rank_by_turnover(KR.universe, 30)
     assert [w.symbol for w in items] == ["000002", "000001"]
     p = fake.api_calls(kis_domestic.RANK_PATH)[0].url.params
+    assert p["FID_COND_MRKT_DIV_CODE"] == "UN"
     assert p["FID_BLNG_CLS_CODE"] == "3" and p["FID_TRGT_EXLS_CLS_CODE"] == "1111111101"
     assert (p["FID_INPUT_PRICE_1"], p["FID_INPUT_PRICE_2"]) == ("2000", "100000")
 
@@ -116,13 +134,13 @@ def test_domestic_rank_applies_universe_filters(tmp_path):
 def test_brokers_require_quote_only_client(tmp_path):
     client = make_client(FakeKis(), tmp_path, quote_only=False)
     with pytest.raises(ValueError):
-        KisDomesticBroker(client, KR.session)
+        KisDomesticBroker(client, KR.data_session)
     with pytest.raises(ValueError):
         KisOverseasBroker(client)
 
 
 def test_order_methods_not_implemented(tmp_path):
-    broker = KisDomesticBroker(make_client(FakeKis(), tmp_path), KR.session)
+    broker = KisDomesticBroker(make_client(FakeKis(), tmp_path), KR.data_session)
     with pytest.raises(NotImplementedError):
         broker.place_order("005930", None, 1, None)
 

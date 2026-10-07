@@ -9,7 +9,13 @@ import pandas as pd
 from core.config import SessionConfig
 
 
-def clean_minutes(df: pd.DataFrame, day: date, session: SessionConfig) -> tuple[pd.DataFrame, list[str]]:
+def clean_minutes(
+    df: pd.DataFrame, day: date, keep: SessionConfig, core: SessionConfig
+) -> tuple[pd.DataFrame, list[str]]:
+    """keep(수집 범위) 밖의 봉은 버리고, core(전략 시간)에 봉이 절반도 없으면 경고한다.
+
+    NXT에서 거래되지 않는 종목은 08:00~09:00, 15:30~20:00 봉이 원래 없으므로 core 기준으로만 센다.
+    """
     issues: list[str] = []
     if df.empty:
         return df, issues
@@ -23,10 +29,10 @@ def clean_minutes(df: pd.DataFrame, day: date, session: SessionConfig) -> tuple[
 
     wrong_day = df.index.date != day
     t = df.index.time
-    outside = (t < session.open) | (t > session.close)
+    outside = (t < keep.open) | (t > keep.close)
     drop = wrong_day | outside
     if drop.any():
-        issues.append(f"정규장·해당일 밖 {int(drop.sum())}건 제거")
+        issues.append(f"수집 시간·해당일 밖 {int(drop.sum())}건 제거")
         df = df[~drop]
 
     df = df.sort_index()
@@ -40,7 +46,9 @@ def clean_minutes(df: pd.DataFrame, day: date, session: SessionConfig) -> tuple[
         issues.append(f"음수 거래량 {int((df['volume'] < 0).sum())}건")
 
     tz = df.index.tz
-    session_minutes = (datetime.combine(day, session.close, tz) - datetime.combine(day, session.open, tz)).seconds // 60
-    if len(df) < session_minutes * 0.5:
-        issues.append(f"분봉 {len(df)}개 — 정규장 {session_minutes}분의 절반 미만 (일부만 받았을 수 있음)")
+    core_minutes = (datetime.combine(day, core.close, tz) - datetime.combine(day, core.open, tz)).seconds // 60
+    t = df.index.time
+    in_core = int(((t >= core.open) & (t < core.close)).sum())
+    if in_core < core_minutes * 0.5:
+        issues.append(f"전략 시간 분봉 {in_core}개 — {core_minutes}분의 절반 미만 (일부만 받았을 수 있음)")
     return df, issues

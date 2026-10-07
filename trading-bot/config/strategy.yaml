@@ -7,9 +7,15 @@ markets:
     timezone: Asia/Seoul
     currency: KRW
     capital: 1000000
+    # 전략 기준 시간: KRX·NXT 메인 연속매매 09:00~15:20.
+    # 시가 범위(OR)는 09:00부터, 단타 청산은 close - flatten_before_close_minutes (= 15:05)
     session:
       open: "09:00"
-      close: "15:30"
+      close: "15:20"
+    # 수집 범위: KRX+NXT 통합 시세 08:00(NXT 프리마켓)~20:00(NXT 애프터마켓)
+    data_session:
+      open: "08:00"
+      close: "20:00"
     entry_window:
       start: "09:15"
       end: "11:00"
@@ -34,6 +40,9 @@ markets:
     currency: USD
     capital: 1000000                # 원화 기준 운용 자금
     session:
+      open: "09:30"
+      close: "16:00"
+    data_session:                   # 정규장만 수집
       open: "09:30"
       close: "16:00"
     entry_window:
