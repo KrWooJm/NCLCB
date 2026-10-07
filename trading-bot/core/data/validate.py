@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import logging
+
 import pandas as pd
 
 from core.config import SessionConfig
+
+logger = logging.getLogger(__name__)
 
 
 def clean_minutes(
@@ -32,7 +36,8 @@ def clean_minutes(
     outside = (t < keep.open) | (t > keep.close)
     drop = wrong_day | outside
     if drop.any():
-        issues.append(f"수집 시간·해당일 밖 {int(drop.sum())}건 제거")
+        # 미국 분봉 API는 프리·애프터마켓과 앞뒤 날짜 봉도 함께 주므로 정상 동작 — 경고로 세지 않는다
+        logger.debug("%s: 수집 시간·해당일 밖 %d건 제거", day, int(drop.sum()))
         df = df[~drop]
 
     df = df.sort_index()

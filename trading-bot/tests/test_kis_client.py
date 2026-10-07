@@ -117,3 +117,45 @@ def test_empty_app_key_rejected(tmp_path):
 
     with pytest.raises(ValueError):
         KisClient("real", SecretStr(""), SecretStr("x"), tmp_path / "t.json", quote_only=True, requests_per_second=1, max_retries=0)
+
+
+def test_rate_limit_slows_down_and_recovers_gradually(tmp_path):
+    from core.broker import kis_client
+
+    fake = FakeKis()
+    state = {"n": 0}
+
+    def handler(r):
+        state["n"] += 1
+        return fail("EGW00201", status=500) if state["n"] == 1 else ok({})
+
+    fake.route(QUOTE, handler)
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def sleep(s):
+        sleeps.append(s)
+        clock["t"] += s
+
+    c = make_client(fake, tmp_path, rps=3, sleep=sleep, monotonic=lambda: clock["t"])
+    c.get(QUOTE, "TR", {})
+    assert c.interval == 1.0  # 0.33초 → 한도 초과 → 최소 1초
+    assert sleeps[-1] == pytest.approx(1.0)  # 재시도 전에 늘어난 간격만큼 대기
+
+    for _ in range(kis_client.SPEEDUP_AFTER - 1):
+        c.get(QUOTE, "TR", {})
+    assert c.interval < 1.0  # 연속 성공 후 조금 빨라짐
+    for _ in range(kis_client.SPEEDUP_AFTER * 20):
+        c.get(QUOTE, "TR", {})
+    assert c.interval == pytest.approx(1 / 3)  # 설정값 아래로는 내려가지 않음
+
+
+def test_repeated_rate_limit_caps_interval(tmp_path):
+    from core.broker import kis_client
+
+    fake = FakeKis()
+    fake.route(QUOTE, lambda r: fail("EGW00201", status=500))
+    c = make_client(fake, tmp_path, max_retries=5)
+    with pytest.raises(KisApiError):
+        c.get(QUOTE, "TR", {})
+    assert c.interval == kis_client.MAX_INTERVAL

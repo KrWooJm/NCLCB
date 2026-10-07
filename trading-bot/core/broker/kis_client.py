@@ -39,6 +39,11 @@ RATE_LIMIT_CODE = "EGW00201"  # 초당 거래건수 초과
 TOKEN_EXPIRED_CODES = {"EGW00123", "EGW00121"}  # 만료·유효하지 않은 토큰
 TOKEN_REFRESH_MARGIN = timedelta(minutes=10)
 
+# 호출 간격 자동 조정: EGW00201을 받으면 간격을 늘리고, 연속 성공하면 설정값 쪽으로 조금씩 되돌린다
+MAX_INTERVAL = 3.0  # 초
+SPEEDUP_AFTER = 30  # 연속 성공 횟수
+SPEEDUP_FACTOR = 0.9
+
 
 class KisApiError(RuntimeError):
     def __init__(self, code: str, message: str, *, status: int | None = None) -> None:
@@ -81,7 +86,9 @@ class KisClient:
         self._key = app_key
         self._secret = app_secret
         self._token_path = token_path
-        self._min_interval = 1.0 / requests_per_second
+        self._base_interval = 1.0 / requests_per_second
+        self._interval = self._base_interval  # 현재 호출 간격 (한도 초과 시 자동으로 늘어남)
+        self._ok_streak = 0
         self._max_retries = max_retries
         self._http = http or httpx.Client(base_url=BASE_URLS[server], timeout=timeout_seconds)
         self._sleep = sleep
@@ -156,10 +163,29 @@ class KisClient:
 
     def _throttle(self) -> None:
         if self._last_call is not None:
-            wait = self._min_interval - (self._monotonic() - self._last_call)
+            wait = self._interval - (self._monotonic() - self._last_call)
             if wait > 0:
                 self._sleep(wait)
         self._last_call = self._monotonic()
+
+    @property
+    def interval(self) -> float:
+        return self._interval
+
+    def _slow_down(self) -> None:
+        before = self._interval
+        self._interval = min(max(self._interval * 2, 1.0), MAX_INTERVAL)
+        self._ok_streak = 0
+        if self._interval != before:
+            logger.info("KIS 호출 한도 초과 → 호출 간격 %.2f초 → %.2f초로 늘림", before, self._interval)
+        else:
+            logger.debug("KIS 호출 한도 초과, 간격 %.2f초 유지", self._interval)
+
+    def _on_success(self) -> None:
+        self._ok_streak += 1
+        if self._interval > self._base_interval and self._ok_streak >= SPEEDUP_AFTER:
+            self._interval = max(self._base_interval, self._interval * SPEEDUP_FACTOR)
+            self._ok_streak = 0
 
     def get(self, path: str, tr_id: str, params: dict[str, str], tr_cont: str = "") -> KisResponse:
         if self.quote_only and not any(m in path for m in QUOTE_PATH_MARKERS):
@@ -191,6 +217,7 @@ class KisClient:
             data = _json(res)
             code = str(data.get("msg_cd", ""))
             if res.status_code == 200 and str(data.get("rt_cd")) == "0":
+                self._on_success()
                 return KisResponse(body=data, tr_cont=res.headers.get("tr_cont", ""))
 
             if code in TOKEN_EXPIRED_CODES and not refreshed:
@@ -198,8 +225,11 @@ class KisClient:
                 self._invalidate_token()
                 refreshed = True
                 continue
-            retriable = code == RATE_LIMIT_CODE or res.status_code >= 500
-            if retriable and attempt < self._max_retries:
+            if code == RATE_LIMIT_CODE and attempt < self._max_retries:
+                attempt += 1
+                self._slow_down()
+                continue  # 다음 _throttle()이 늘어난 간격만큼 기다린다
+            if res.status_code >= 500 and code != RATE_LIMIT_CODE and attempt < self._max_retries:
                 attempt += 1
                 logger.warning("KIS 일시 오류 [%s] HTTP %s, 재시도 %d/%d", code, res.status_code, attempt, self._max_retries)
                 self._sleep(2**attempt * 0.5)

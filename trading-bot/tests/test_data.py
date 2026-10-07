@@ -68,7 +68,8 @@ def test_clean_minutes_drops_duplicates_and_out_of_session():
     assert clean.index.min().time() == time(8, 0)
     assert clean.index.max().time() == time(20, 0)
     assert clean.index.is_unique
-    assert any("중복" in m for m in issues) and any("밖" in m for m in issues)
+    assert any("중복" in m for m in issues)
+    assert not any("밖" in m for m in issues)  # 범위 밖 제거는 정상 동작이라 경고가 아니다
 
 
 def test_clean_minutes_flags_bad_ohlc_and_partial_day():
