@@ -97,9 +97,20 @@ def test_app_yaml_collect_settings():
     assert app.data_dir.is_absolute()
 
 
-def test_us_extra_symbols_need_exchange(app_dict, write_yaml):
-    from core.config import load_app_config as load
-
-    app_dict["collect"]["us"]["extra_symbols"] = ["AAPL"]
+@pytest.mark.parametrize("field, value", [("extra_symbols", ["AAPL"]), ("symbols", ["NASDAQ:AAPL"])])
+def test_us_symbols_need_exchange(app_dict, write_yaml, field, value):
+    app_dict["collect"]["us"][field] = value
     with pytest.raises(ValidationError, match="거래소:티커"):
-        load(write_yaml(app_dict))
+        load_app_config(write_yaml(app_dict))
+
+
+def test_us_list_mode_needs_symbols(app_dict, write_yaml):
+    app_dict["collect"]["us"]["use_ranking"] = False
+    app_dict["collect"]["us"]["symbols"] = []
+    with pytest.raises(ValidationError, match="symbols"):
+        load_app_config(write_yaml(app_dict))
+
+
+def test_default_us_watchlist_is_symbol_list():
+    us = load_app_config().collect.us
+    assert us.use_ranking is False and len(us.symbols) > 0

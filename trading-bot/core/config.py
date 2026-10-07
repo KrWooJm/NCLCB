@@ -211,17 +211,27 @@ class DomesticCollectConfig(_Strict):
 
 
 class UsCollectConfig(_Strict):
+    # 해외 거래대금 순위 API는 계정에 따라 0건만 돌려줘 기본은 symbols 목록을 쓴다
+    use_ranking: bool
+    symbols: list[str]  # use_ranking=false일 때 수집 대상
     exchanges: list[Literal["NAS", "NYS", "AMS"]] = Field(min_length=1)
     candidates: int = Field(gt=0)
     extra_symbols: list[str]
 
-    @field_validator("extra_symbols")
+    @field_validator("symbols", "extra_symbols")
     @classmethod
     def _has_exchange(cls, v: list[str]) -> list[str]:
         for s in v:
-            if ":" not in s:
-                raise ValueError(f"미국 종목은 '거래소:티커' 형식이어야 합니다: {s}")
+            excd, sep, ticker = s.partition(":")
+            if not sep or excd not in ("NAS", "NYS", "AMS") or not ticker:
+                raise ValueError(f"미국 종목은 '거래소:티커' 형식이어야 합니다 (거래소 NAS/NYS/AMS): {s}")
         return v
+
+    @model_validator(mode="after")
+    def _list_needed(self) -> UsCollectConfig:
+        if not self.use_ranking and not self.symbols:
+            raise ValueError("use_ranking이 false면 symbols에 종목을 넣어야 합니다")
+        return self
 
 
 class CollectConfig(_Strict):

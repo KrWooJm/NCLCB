@@ -30,6 +30,25 @@ collect:
     candidates: 30          # 거래대금 순위 상위 N개 (순위 API는 최대 30개)
     extra_symbols: []       # 항상 수집할 종목코드, 예: ["005930"]
   us:
-    exchanges: [NAS, NYS, AMS]
-    candidates: 40          # 거래소 합산 거래대금 상위 N개 (3단계 갭 필터 전 후보)
-    extra_symbols: []       # "거래소:티커", 예: ["NAS:AAPL"]
+    # 해외 거래대금 순위 API가 0건만 돌려줘서 직접 고른 목록을 쓴다 (true로 바꾸면 순위 조회 시도)
+    use_ranking: false
+    # "거래소:티커". 거래소가 틀리면 분봉이 0건으로 온다 (NAS=나스닥, NYS=뉴욕, AMS=아멕스)
+    # 초기 목록 — 거래가 많은 보통주 위주. 가격 조건($5~$100)은 3단계 유니버스에서 다시 거른다.
+    symbols:
+      - NAS:INTC
+      - NAS:CSCO
+      - NAS:SOFI
+      - NAS:AAL
+      - NAS:RIVN
+      - NYS:F
+      - NYS:T
+      - NYS:PFE
+      - NYS:BAC
+      - NYS:WFC
+      - NYS:KO
+      - NYS:CCL
+      - NYS:SNAP
+      - NYS:UBER
+    exchanges: [NAS, NYS, AMS]  # use_ranking: true일 때만 사용
+    candidates: 40          # use_ranking: true일 때 거래소 합산 거래대금 상위 N개
+    extra_symbols: []       # 순위 결과에 항상 더할 종목, 예: ["NAS:AAPL"]

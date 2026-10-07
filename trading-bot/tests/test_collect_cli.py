@@ -7,12 +7,12 @@ from pathlib import Path
 import httpx
 
 import core.broker.kis_client as kis_client
-from core.broker import kis_domestic
+from core.broker import kis_domestic, kis_overseas
 from core.config import load_app_config
 from core.data.store import CandleStore
 from core.models import Market
 from tests.kis_fake import FakeKis, ok
-from tests.test_kis_brokers import domestic_minute_handler, krx_minutes
+from tests.test_kis_brokers import domestic_minute_handler, krx_minutes, nyse_minutes, overseas_minute_handler
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,6 +32,7 @@ def setup_cli(tmp_path, monkeypatch, rank_rows):
     fake = FakeKis()
     fake.route(kis_domestic.RANK_PATH, lambda r: ok({"output": rank_rows}))
     fake.route(kis_domestic.MINUTE_PATH, domestic_minute_handler({DAY: krx_minutes(DAY)}))
+    fake.route(kis_overseas.MINUTE_PATH, overseas_minute_handler(nyse_minutes(DAY)))
 
     real_client = httpx.Client
     monkeypatch.setattr(kis_client.httpx, "Client", lambda **kw: real_client(base_url="https://kis.test", transport=httpx.MockTransport(fake)))
@@ -88,3 +89,18 @@ def test_collect_cli_falls_back_to_saved_watchlist_when_ranking_empty(tmp_path, 
 def test_collect_cli_empty_ranking_without_saved_watchlist_fails(tmp_path, monkeypatch):
     cli, _ = setup_cli(tmp_path, monkeypatch, [])
     assert cli.main(["--market", "domestic", "--date", "2026-10-06", "--no-backfill"]) == 1
+
+
+def test_collect_cli_us_uses_symbol_list_without_ranking(tmp_path, monkeypatch):
+    cli, fake = setup_cli(tmp_path, monkeypatch, [])
+    app = cli.load_app_config()
+    app = app.model_copy(update={"collect": app.collect.model_copy(update={"us": app.collect.us.model_copy(update={"symbols": ["NAS:INTC", "NYS:F"]})})})
+    monkeypatch.setattr(cli, "load_app_config", lambda: app)
+
+    assert cli.main(["--market", "us", "--date", "2026-10-06", "--no-backfill"]) == 0
+
+    assert not fake.api_calls(kis_overseas.RANK_PATH)
+    store = CandleStore(tmp_path / "data")
+    for sym in ["NAS:INTC", "NYS:F"]:
+        assert len(store.read(Market.US, sym, DAY, DAY)) == 390
+    assert (tmp_path / "data" / "watchlists" / "us" / "2026-10-06.json").exists()

@@ -97,7 +97,7 @@ python scripts/collect.py --market us --symbols NAS:AAPL,NYS:F    # 순위 조�
 
 | 항목 | 내용 |
 |---|---|
-| 감시목록 | 국내: 거래대금 순위(최대 30) → 가격·시가총액·거래대금 필터 (관리·경고·우선주·정지·ETF·ETN·스팩 제외) / 미국: NAS·NYS·AMS 거래대금 순위 합산 상위 40, 가격 $5~$100. ETF·ADR 구분은 3단계에서 거름 |
+| 감시목록 | 국내: 거래대금 순위(최대 30) → 가격·시가총액·거래대금 필터 (관리·경고·우선주·정지·ETF·ETN·스팩 제외) / 미국: `config/app.yaml`의 `collect.us.symbols` 목록 (해외 순위 API가 0건만 돌려줘서 직접 지정. `use_ranking: true`로 순위 조회 시도 가능) |
 | 국내 범위 | 08:00~20:00 통합(KRX+NXT). NXT에서 거래되지 않는 종목은 09:00~15:30 봉만 있습니다 |
 | 저장 위치 | `data/candles/{domestic,us}/1m/{종목}/{YYYY-MM-DD}.parquet` (시각은 시간대 포함) |
 | 감시목록 기록 | `data/watchlists/{market}/{YYYY-MM-DD}.json` |

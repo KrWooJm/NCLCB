@@ -73,13 +73,19 @@ def main(argv: list[str] | None = None) -> int:
         broker = KisOverseasBroker(client)
         extra = app.collect.us.extra_symbols
 
-    from_ranking = not args.symbols
+    def as_items(symbols: list[str]) -> list[WatchItem]:
+        return [WatchItem(s.strip(), "", float("nan"), float("nan")) for s in symbols if s.strip()]
+
+    from_ranking = False
     if args.symbols:
-        items = [WatchItem(s.strip(), "", float("nan"), float("nan")) for s in args.symbols.split(",") if s.strip()]
+        items = as_items(args.symbols.split(","))
+    elif market is Market.US and not app.collect.us.use_ranking:
+        items = as_items(app.collect.us.symbols)
+        logger.info("미국 감시목록: config/app.yaml의 collect.us.symbols %d종목", len(items))
     elif market is Market.DOMESTIC:
-        items = broker.rank_by_turnover(mcfg.universe, app.collect.domestic.candidates)
+        items, from_ranking = broker.rank_by_turnover(mcfg.universe, app.collect.domestic.candidates), True
     else:
-        items = broker.rank_by_turnover(mcfg.universe, app.collect.us.exchanges, app.collect.us.candidates)
+        items, from_ranking = broker.rank_by_turnover(mcfg.universe, app.collect.us.exchanges, app.collect.us.candidates), True
 
     if from_ranking and not items:
         prev = latest_watchlist(root, market, day)
@@ -99,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     if not items:
         logger.error("감시목록이 비었습니다")
         return 1
-    if not args.dry_run and from_ranking:
+    if not args.dry_run and not args.symbols:
         save_watchlist(root, market, day, items)
 
     summary = collect(
